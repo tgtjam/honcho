@@ -26,6 +26,35 @@ services:
       - CACHE_URL=redis://redis:6379/0?suppress=true
       - CACHE_ENABLED=true
       - METRICS_ENABLED=false
+    healthcheck:
+      test:
+        - CMD
+        - /app/.venv/bin/python
+        - -c
+        - import urllib.request; urllib.request.urlopen('http://localhost:8000/health', timeout=2).read()
+      interval: 5s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    restart: unless-stopped
+
+  deriver:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    entrypoint:
+      - /app/.venv/bin/python
+      - -m
+      - src.deriver
+    depends_on:
+      api:
+        condition: service_healthy
+    env_file:
+      - .env
+    environment:
+      - DB_CONNECTION_URI=postgresql+psycopg://postgres:postgres@database:5432/postgres
+      - CACHE_URL=redis://redis:6379/0?suppress=true
+      - CACHE_ENABLED=true
     restart: unless-stopped
 
   database:
