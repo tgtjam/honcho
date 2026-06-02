@@ -772,6 +772,22 @@ class DeriverSettings(HonchoSettings):
         int, Field(default=100, gt=0, le=1000)
     ] = 100
 
+    # Maximum characters for working representation after dedup.
+    # Applied at read time — observations are never deleted from the DB.
+    # Higher-level reasoning (inductive, deductive) is prioritized over
+    # raw facts (explicit).
+    WORKING_REPRESENTATION_MAX_CHARS: Annotated[
+        int, Field(default=3000, gt=500, le=10000)
+    ] = 3000
+
+    # Cosine distance threshold for embedding-based dedup.
+    # Two observations with embedding cosine distance < this value are
+    # considered duplicates; only the more informative one is kept.
+    # 0.15 = near-identical; 0.25 = very similar; 0.35 = related.
+    WORKING_REPRESENTATION_DEDUP_DISTANCE: Annotated[
+        float, Field(default=0.20, ge=0.0, le=1.0)
+    ] = 0.20
+
     REPRESENTATION_BATCH_MAX_TOKENS: Annotated[
         int,
         Field(default=1024, ge=128, le=16_384),

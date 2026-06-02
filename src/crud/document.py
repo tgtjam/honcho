@@ -3,7 +3,7 @@ from collections.abc import Sequence
 from logging import getLogger
 from typing import Any, cast
 
-from sqlalchemy import delete, select, update
+from sqlalchemy import delete, select, text, update
 from sqlalchemy.engine import CursorResult
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -520,6 +520,13 @@ async def create_documents(
         # documents will be left in sync_state='pending' with NULL embeddings.
         # The reconciliation job will automatically re-embed and sync these documents,
         await db.commit()
+
+        # ── Observation deduplication is handled at read time ──
+        # Observations are never deleted from the DB — they remain
+        # available for semantic search (honcho_search, honcho_reasoning).
+        # Deduplication and size-based budgeting are applied when building
+        # the working representation (Representation.deduplicate_semantic
+        # + Representation.truncate_to_budget), not at write time.
 
         # Store embeddings in external vector store after documents are committed (IDs now available)
         if docs_with_embeddings:

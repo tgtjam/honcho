@@ -6,7 +6,7 @@ import time
 from contextlib import suppress
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import select, text as sa_text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src import crud, exceptions, models, schemas
@@ -336,6 +336,9 @@ class RepresentationManager:
 
         representation = Representation()
 
+        # Collect docs from all sources for post-merge dedup
+        all_docs: list[models.Document] = []
+
         # Get semantic observations if requested
         if include_semantic_query:
             semantic_docs = await self._query_documents_semantic(
@@ -345,27 +348,122 @@ class RepresentationManager:
                 max_distance=semantic_search_max_distance,
                 embedding=embedding,
             )
-            representation.merge_representation(
-                Representation.from_documents(semantic_docs)
-            )
+            all_docs.extend(semantic_docs)
 
         # Get most derived observations if requested
         if include_most_derived:
             derived_docs = await self._query_documents_most_derived(
                 db, top_k=top_observations
             )
-            representation.merge_representation(
-                Representation.from_documents(derived_docs)
-            )
+            all_docs.extend(derived_docs)
 
         # Get recent observations
         recent_docs = await self._query_documents_recent(
             db, top_k=recent_observations, session_name=session_name
         )
+        all_docs.extend(recent_docs)
 
-        representation.merge_representation(Representation.from_documents(recent_docs))
+        # Post-merge: deduplicate by embedding cosine distance, then
+        # exact-content dedup, then apply size-based budget.
+        all_docs = self._dedup_docs_by_embedding(all_docs)
+        representation = Representation.from_documents(all_docs)
+        representation.deduplicate_semantic()
+        representation.truncate_to_budget(
+            max_chars=settings.DERIVER.WORKING_REPRESENTATION_MAX_CHARS
+        )
 
         return representation
+
+    def _dedup_docs_by_embedding(
+        self, docs: list[models.Document]
+    ) -> list[models.Document]:
+        """Remove embedding-near-duplicate documents, keeping the more informative one.
+
+        Compares every pair of documents.  If their cosine embedding distance
+        is below the configured threshold, the shorter one (less informative)
+        is dropped.  Documents without embeddings are kept as-is.
+
+        This runs in-memory after all query sources are merged, so it catches
+        duplicates that come from different sources (semantic, derived, recent).
+        """
+        import json
+        import numpy as np
+
+        if not docs or len(docs) < 2:
+            return docs
+
+        threshold = settings.DERIVER.WORKING_REPRESENTATION_DEDUP_DISTANCE
+
+        # Parse embeddings — pgvector raw SQL returns strings, ORM returns lists
+        parsed: list[tuple[models.Document, list[float] | None]] = []
+        for d in docs:
+            emb = d.embedding
+            if emb is None:
+                parsed.append((d, None))
+            elif isinstance(emb, str):
+                try:
+                    parsed.append((d, json.loads(emb)))
+                except (json.JSONDecodeError, ValueError):
+                    parsed.append((d, None))
+            elif isinstance(emb, (list, np.ndarray)):
+                parsed.append((d, list(emb)))
+            else:
+                parsed.append((d, None))
+
+        with_emb = [(d, e) for d, e in parsed if e is not None]
+        without_emb = [d for d, e in parsed if e is None]
+
+        if len(with_emb) < 2:
+            # Dedup by content only
+            seen: set[str] = set()
+            result: list[models.Document] = []
+            for d in docs:
+                key = (d.content or "").strip().lower()
+                if key not in seen:
+                    seen.add(key)
+                    result.append(d)
+            return result
+
+        # Compute pairwise cosine distances using numpy
+        vectors = np.array([e for _, e in with_emb], dtype=np.float32)
+        # Normalize for cosine: cos_dist = 1 - (a·b / |a||b|)
+        norms = np.linalg.norm(vectors, axis=1, keepdims=True)
+        norms = np.where(norms == 0, 1, norms)
+        normalized = vectors / norms
+        # Pairwise cosine similarity matrix
+        sim_matrix = normalized @ normalized.T
+        # Convert to distance
+        dist_matrix = 1.0 - sim_matrix
+
+        n = len(with_emb)
+        drop_indices: set[int] = set()
+
+        for i in range(n):
+            if i in drop_indices:
+                continue
+            for j in range(i + 1, n):
+                if j in drop_indices:
+                    continue
+                if dist_matrix[i, j] < threshold:
+                    # Keep the longer (more informative) one
+                    len_i = len(with_emb[i][0].content or "")
+                    len_j = len(with_emb[j][0].content or "")
+                    if len_j >= len_i:
+                        drop_indices.add(i)
+                    else:
+                        drop_indices.add(j)
+
+        kept = [d for idx, (d, _) in enumerate(with_emb) if idx not in drop_indices]
+
+        # Merge back with content dedup to avoid exact dupes between sources
+        seen_content: set[str] = set()
+        result: list[models.Document] = []
+        for d in without_emb + kept:
+            key = (d.content or "").strip().lower()
+            if key not in seen_content:
+                seen_content.add(key)
+                result.append(d)
+        return result
 
     async def _query_documents_semantic(
         self,
@@ -408,47 +506,155 @@ class RepresentationManager:
     async def _query_documents_recent(
         self, db: AsyncSession, top_k: int, session_name: str | None = None
     ) -> list[models.Document]:
-        """Query most recent documents."""
-        stmt = (
-            select(models.Document)
-            .limit(top_k)
-            .where(
-                models.Document.workspace_name == self.workspace_name,
-                models.Document.observer == self.observer,
-                models.Document.observed == self.observed,
-                models.Document.deleted_at.is_(None),
-                *(
-                    [models.Document.session_name == session_name]
-                    if session_name is not None
-                    else []
-                ),
-            )
-            .order_by(models.Document.created_at.desc())
-        )
+        """Query most recent documents, excluding embedding-near-duplicates.
 
-        result = await db.execute(stmt)
-        documents = result.scalars().all()
+        For each document, excludes it if there exists another document in the
+        same collection with cosine embedding distance < DEDUP_DISTANCE that is
+        either longer or equally long (more informative).  This collapses
+        semantically equivalent observations (e.g. "juan applies validation"
+        vs "Applies validation before implementing") using the embeddings that
+        the deriver already computed.
+
+        Documents without embeddings are included as-is (pending sync).
+        """
+        dedup_distance = settings.DERIVER.WORKING_REPRESENTATION_DEDUP_DISTANCE
+
+        session_filter = (
+            "AND d.session_name = :session_name " if session_name else ""
+        )
+        session_param = {"session_name": session_name} if session_name else {}
+
+        # Use raw SQL for pgvector <=> operator (not available in ORM)
+        raw_sql = sa_text(f"""
+            SELECT d.id, d.internal_metadata, d.content, d.level,
+                   d.times_derived, d.embedding, d.source_ids,
+                   d.created_at, d.observer, d.observed,
+                   d.workspace_name, d.session_name, d.deleted_at,
+                   d.sync_state, d.last_sync_at, d.sync_attempts
+            FROM documents d
+            WHERE d.workspace_name = :workspace_name
+              AND d.observer = :observer
+              AND d.observed = :observed
+              AND d.deleted_at IS NULL
+              {session_filter}
+              AND (
+                  d.embedding IS NULL
+                  OR NOT EXISTS (
+                      SELECT 1 FROM documents d2
+                      WHERE d2.workspace_name = d.workspace_name
+                        AND d2.observer = d.observer
+                        AND d2.observed = d.observed
+                        AND d2.deleted_at IS NULL
+                        AND d2.id != d.id
+                        AND d2.embedding IS NOT NULL
+                        AND (d2.embedding <=> d.embedding) < :dedup_dist
+                        AND LENGTH(d2.content) >= LENGTH(d.content)
+                  )
+              )
+            ORDER BY d.created_at DESC
+            LIMIT :limit
+        """)
+
+        params = {
+            "workspace_name": self.workspace_name,
+            "observer": self.observer,
+            "observed": self.observed,
+            "dedup_dist": dedup_distance,
+            "limit": top_k,
+            **session_param,
+        }
+
+        result = await db.execute(raw_sql, params)
+        rows = result.fetchall()
+        # Map raw rows back to Document ORM objects
+        documents = []
+        for row in rows:
+            doc = models.Document()
+            doc.id = row[0]
+            doc.internal_metadata = row[1]
+            doc.content = row[2]
+            doc.level = row[3]
+            doc.times_derived = row[4]
+            doc.embedding = row[5]
+            doc.source_ids = row[6]
+            doc.created_at = row[7]
+            doc.observer = row[8]
+            doc.observed = row[9]
+            doc.workspace_name = row[10]
+            doc.session_name = row[11]
+            doc.deleted_at = row[12]
+            doc.sync_state = row[13]
+            doc.last_sync_at = row[14]
+            doc.sync_attempts = row[15]
+            documents.append(doc)
         db.expunge_all()
-        return list(documents)
+        return documents
 
     async def _query_documents_most_derived(
         self, db: AsyncSession, top_k: int
     ) -> list[models.Document]:
-        """Query most derived documents."""
-        stmt = (
-            select(models.Document)
-            .limit(top_k)
-            .where(
-                models.Document.workspace_name == self.workspace_name,
-                models.Document.observer == self.observer,
-                models.Document.observed == self.observed,
-                models.Document.deleted_at.is_(None),
-            )
-            .order_by(models.Document.times_derived.desc())
-        )
+        """Query most derived documents, excluding embedding-near-duplicates."""
+        dedup_distance = settings.DERIVER.WORKING_REPRESENTATION_DEDUP_DISTANCE
 
-        result = await db.execute(stmt)
-        documents = result.scalars().all()
+        raw_sql = sa_text("""
+            SELECT d.id, d.internal_metadata, d.content, d.level,
+                   d.times_derived, d.embedding, d.source_ids,
+                   d.created_at, d.observer, d.observed,
+                   d.workspace_name, d.session_name, d.deleted_at,
+                   d.sync_state, d.last_sync_at, d.sync_attempts
+            FROM documents d
+            WHERE d.workspace_name = :workspace_name
+              AND d.observer = :observer
+              AND d.observed = :observed
+              AND d.deleted_at IS NULL
+              AND (
+                  d.embedding IS NULL
+                  OR NOT EXISTS (
+                      SELECT 1 FROM documents d2
+                      WHERE d2.workspace_name = d.workspace_name
+                        AND d2.observer = d.observer
+                        AND d2.observed = d.observed
+                        AND d2.deleted_at IS NULL
+                        AND d2.id != d.id
+                        AND d2.embedding IS NOT NULL
+                        AND (d2.embedding <=> d.embedding) < :dedup_dist
+                        AND LENGTH(d2.content) >= LENGTH(d.content)
+                  )
+              )
+            ORDER BY d.times_derived DESC
+            LIMIT :limit
+        """)
+
+        params = {
+            "workspace_name": self.workspace_name,
+            "observer": self.observer,
+            "observed": self.observed,
+            "dedup_dist": dedup_distance,
+            "limit": top_k,
+        }
+
+        result = await db.execute(raw_sql, params)
+        rows = result.fetchall()
+        documents = []
+        for row in rows:
+            doc = models.Document()
+            doc.id = row[0]
+            doc.internal_metadata = row[1]
+            doc.content = row[2]
+            doc.level = row[3]
+            doc.times_derived = row[4]
+            doc.embedding = row[5]
+            doc.source_ids = row[6]
+            doc.created_at = row[7]
+            doc.observer = row[8]
+            doc.observed = row[9]
+            doc.workspace_name = row[10]
+            doc.session_name = row[11]
+            doc.deleted_at = row[12]
+            doc.sync_state = row[13]
+            doc.last_sync_at = row[14]
+            doc.sync_attempts = row[15]
+            documents.append(doc)
         db.expunge_all()
         return list(documents)
 

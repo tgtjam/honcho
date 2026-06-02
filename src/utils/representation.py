@@ -371,6 +371,85 @@ class Representation(BaseModel):
         self.inductive.sort(key=lambda x: x.created_at)
         self.contradiction.sort(key=lambda x: x.created_at)
 
+    def deduplicate_semantic(self, threshold: float = 0.65):
+        """Remove exact-content duplicate observations across all levels.
+
+        Note: embedding-based semantic dedup is handled at the SQL query level
+        (pgvector self-join in _query_documents_recent / _query_documents_most_derived).
+        This method only catches any remaining exact duplicates that slipped through.
+        """
+        for attr in ("explicit", "deductive", "inductive", "contradiction"):
+            observations = getattr(self, attr)
+            if len(observations) < 2:
+                continue
+            seen_normalized: set[str] = set()
+            unique: list = []
+            for obs in observations:
+                key = self._obs_text(obs).strip().lower()
+                if key not in seen_normalized:
+                    seen_normalized.add(key)
+                    unique.append(obs)
+            setattr(self, attr, unique)
+
+    # ------------------------------------------------------------------
+    # helpers
+    # ------------------------------------------------------------------
+
+    @classmethod
+    def _obs_text(cls, obs) -> str:
+        """Extract the plain-text content from any observation type."""
+        # ExplicitObservation / ContradictionObservation use .content
+        if hasattr(obs, "content"):
+            return obs.content
+        # DeductiveObservation / InductiveObservation use .conclusion
+        if hasattr(obs, "conclusion"):
+            return obs.conclusion
+        return str(obs)
+
+    def truncate_to_budget(self, max_chars: int = 3000) -> "Representation":
+        """Trim observations to fit within a character budget.
+
+        Preserves the most informative observations first:
+          1. Inductive  (highest-level reasoning)
+          2. Deductive  (logical conclusions)
+          3. Contradiction  (important conflicts)
+          4. Explicit   (raw facts — most expendable)
+
+        Within each tier, longer (more detailed) observations are kept.
+        Returns self for chaining.
+
+        Args:
+            max_chars: Maximum total characters for all observation text.
+        """
+        # Priority order: higher-level reasoning first
+        tiers = [
+            ("inductive", self.inductive),
+            ("deductive", self.deductive),
+            ("contradiction", self.contradiction),
+            ("explicit", self.explicit),
+        ]
+
+        used = 0
+        for attr_name, obs_list in tiers:
+            if used >= max_chars:
+                setattr(self, attr_name, [])
+                continue
+
+            remaining = max_chars - used
+            kept: list = []
+            # Sort by text length descending — keep most informative
+            sorted_obs = sorted(obs_list, key=lambda o: len(self._obs_text(o)), reverse=True)
+            for obs in sorted_obs:
+                text = self._obs_text(obs)
+                if used + len(text) <= remaining:
+                    kept.append(obs)
+                    used += len(text)
+                if used >= max_chars:
+                    break
+            setattr(self, attr_name, kept)
+
+        return self
+
         if max_observations:
             self.explicit = self.explicit[-max_observations:]
             self.deductive = self.deductive[-max_observations:]
