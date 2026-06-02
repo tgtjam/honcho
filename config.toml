@@ -1,0 +1,155 @@
+# Honcho — TGT One self-hosted setup
+# LLMs: DeepSeek API / Embeddings: Ollama local
+# Based on elkimek/honcho-self-hosted, adapted for our stack
+
+[app]
+LOG_LEVEL = "INFO"
+SESSION_OBSERVERS_LIMIT = 10
+GET_CONTEXT_MAX_TOKENS = 100000
+MAX_FILE_SIZE = 5242880
+MAX_MESSAGE_SIZE = 25000
+EMBED_MESSAGES = true
+MAX_EMBEDDING_TOKENS = 8192
+NAMESPACE = "honcho"
+
+[db]
+CONNECTION_URI = "postgresql+psycopg://postgres:postgres@database:5432/postgres"
+SCHEMA = "public"
+POOL_SIZE = 10
+MAX_OVERFLOW = 20
+POOL_TIMEOUT = 30
+POOL_RECYCLE = 300
+
+[auth]
+USE_AUTH = false
+
+[cache]
+ENABLED = true
+URL = "redis://redis:6379/0?suppress=true"
+DEFAULT_TTL_SECONDS = 300
+
+# ---------------------------------------------------------------------------
+# LLM: DeepSeek API (primary)
+# ---------------------------------------------------------------------------
+[llm]
+DEFAULT_MAX_TOKENS = 2500
+OPENAI_API_KEY = "${LLM_OPENAI_API_KEY}"
+EMBEDDING_PROVIDER = "openai"
+EMBEDDING_OPENAI_API_KEY = ""
+EMBEDDING_OPENAI_BASE_URL = "http://ollama:11434/v1"
+EMBEDDING_MODEL = "mxbai-embed-large"
+
+# ---------------------------------------------------------------------------
+# Deriver — observation extraction (every message)
+# ---------------------------------------------------------------------------
+[deriver]
+ENABLED = true
+WORKERS = 1
+PROVIDER = "openai"
+MODEL = "deepseek-v4-flash"
+BACKUP_PROVIDER = ""
+BACKUP_MODEL = ""
+DEDUPLICATE = true
+MAX_OUTPUT_TOKENS = 4096
+MAX_INPUT_TOKENS = 23000
+WORKING_REPRESENTATION_MAX_OBSERVATIONS = 100
+WORKING_REPRESENTATION_DEDUP_DISTANCE = 0.35
+WORKING_REPRESENTATION_MAX_CHARS = 3000
+REPRESENTATION_BATCH_MAX_TOKENS = 1024
+FLUSH_ENABLED = false
+OPENAI_API_KEY = "${LLM_OPENAI_API_KEY}"
+OPENAI_BASE_URL = "https://api.deepseek.com/v1"
+
+# ---------------------------------------------------------------------------
+# Dialectic — multi-level reasoning for peer.chat
+# ---------------------------------------------------------------------------
+[dialectic]
+MAX_OUTPUT_TOKENS = 8192
+MAX_INPUT_TOKENS = 100000
+HISTORY_TOKEN_LIMIT = 8192
+SESSION_HISTORY_MAX_TOKENS = 4096
+
+[dialectic.levels.minimal]
+PROVIDER = "openai"
+MODEL = "deepseek-v4-flash"
+MAX_TOOL_ITERATIONS = 1
+MAX_OUTPUT_TOKENS = 250
+OPENAI_API_KEY = "${LLM_OPENAI_API_KEY}"
+OPENAI_BASE_URL = "https://api.deepseek.com/v1"
+
+[dialectic.levels.low]
+PROVIDER = "openai"
+MODEL = "deepseek-v4-flash"
+MAX_TOOL_ITERATIONS = 5
+OPENAI_API_KEY = "${LLM_OPENAI_API_KEY}"
+OPENAI_BASE_URL = "https://api.deepseek.com/v1"
+
+[dialectic.levels.medium]
+PROVIDER = "openai"
+MODEL = "deepseek-v4-pro"
+MAX_TOOL_ITERATIONS = 2
+OPENAI_API_KEY = "${LLM_OPENAI_API_KEY}"
+OPENAI_BASE_URL = "https://api.deepseek.com/v1"
+
+[dialectic.levels.high]
+PROVIDER = "openai"
+MODEL = "deepseek-v4-pro"
+MAX_TOOL_ITERATIONS = 4
+OPENAI_API_KEY = "${LLM_OPENAI_API_KEY}"
+OPENAI_BASE_URL = "https://api.deepseek.com/v1"
+
+[dialectic.levels.max]
+PROVIDER = "openai"
+MODEL = "deepseek-v4-pro"
+MAX_TOOL_ITERATIONS = 10
+OPENAI_API_KEY = "${LLM_OPENAI_API_KEY}"
+OPENAI_BASE_URL = "https://api.deepseek.com/v1"
+
+# ---------------------------------------------------------------------------
+# Summary — session summarization
+# ---------------------------------------------------------------------------
+[summary]
+ENABLED = true
+MESSAGES_PER_SHORT_SUMMARY = 20
+MESSAGES_PER_LONG_SUMMARY = 60
+PROVIDER = "openai"
+MODEL = "deepseek-v4-pro"
+MAX_TOKENS_SHORT = 1000
+MAX_TOKENS_LONG = 4000
+OPENAI_API_KEY = "${LLM_OPENAI_API_KEY}"
+OPENAI_BASE_URL = "https://api.deepseek.com/v1"
+
+# ---------------------------------------------------------------------------
+# Dream — memory consolidation (runs rarely, needs best quality)
+# ---------------------------------------------------------------------------
+[dream]
+ENABLED = true
+DOCUMENT_THRESHOLD = 50
+IDLE_TIMEOUT_MINUTES = 60
+MIN_HOURS_BETWEEN_DREAMS = 8
+ENABLED_TYPES = ["omni"]
+PROVIDER = "openai"
+MODEL = "deepseek-v4-pro"
+MAX_OUTPUT_TOKENS = 16384
+MAX_TOOL_ITERATIONS = 20
+HISTORY_TOKEN_LIMIT = 16384
+DEDUCTION_MODEL = "deepseek-v4-pro"
+INDUCTION_MODEL = "deepseek-v4-pro"
+OPENAI_API_KEY = "${LLM_OPENAI_API_KEY}"
+OPENAI_BASE_URL = "https://api.deepseek.com/v1"
+
+[peer_card]
+ENABLED = true
+
+[vector_store]
+TYPE = "pgvector"
+DIMENSIONS = 1024
+
+[metrics]
+ENABLED = false
+
+[telemetry]
+ENABLED = false
+
+[sentry]
+ENABLED = false
