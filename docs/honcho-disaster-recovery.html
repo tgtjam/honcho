@@ -1,0 +1,687 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Honcho — Guía de Recuperación ante Desastres</title>
+<script src="https://unpkg.com/@antv/g6@5/dist/g6.min.js"></script>
+<style>
+  :root {
+    --bg: #0d1117; --surface: #161b22; --border: #30363d;
+    --text: #e6edf3; --text-muted: #8b949e; --accent: #58a6ff;
+    --green: #3fb950; --cyan: #39d2c0; --yellow: #d29922;
+    --purple: #bc8cff; --orange: #f78166; --pink: #f778ba;
+    --red: #f85149;
+  }
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, 'Segoe UI', 'Noto Sans', Helvetica, Arial, sans-serif;
+    background: var(--bg); color: var(--text); line-height: 1.6;
+    padding: 40px 24px;
+  }
+  .container { max-width: 1100px; margin: 0 auto; }
+
+  /* Header */
+  header { text-align: center; padding: 40px 0 20px; }
+  header h1 { font-size: 2rem; font-weight: 700; color: var(--red); }
+  header .subtitle { color: var(--text-muted); font-size: 1rem; margin-top: 6px; }
+  header .badge {
+    display: inline-block; background: var(--surface); border: 1px solid var(--border);
+    border-radius: 20px; padding: 3px 14px; font-size: 0.8rem; color: var(--text-muted); margin-top: 8px;
+  }
+
+  /* Severity tags */
+  .sev { display: inline-block; border-radius: 4px; padding: 2px 8px; font-size: 0.7rem; font-weight: 600; text-transform: uppercase; }
+  .sev-critical { background: rgba(248,81,73,0.15); color: var(--red); }
+  .sev-high { background: rgba(210,153,34,0.15); color: var(--yellow); }
+  .sev-low { background: rgba(57,210,192,0.15); color: var(--cyan); }
+
+  /* TOC */
+  .toc { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 20px 24px; margin: 24px 0; }
+  .toc h2 { font-size: 0.9rem; text-transform: uppercase; letter-spacing: 1px; color: var(--text-muted); margin-bottom: 12px; }
+  .toc ul { list-style: none; columns: 2; column-gap: 24px; }
+  .toc li a { color: var(--accent); text-decoration: none; font-size: 0.9rem; display: block; padding: 3px 0; }
+  .toc li a:hover { text-decoration: underline; }
+
+  /* Sections */
+  section { margin: 40px 0; }
+  section h2 {
+    font-size: 1.4rem; font-weight: 600; color: var(--text);
+    padding-bottom: 8px; border-bottom: 1px solid var(--border);
+    margin-bottom: 20px; display: flex; align-items: center; gap: 10px;
+  }
+  section h2 .num { color: var(--text-muted); font-weight: 400; font-size: 0.9rem; }
+  section h3 {
+    font-size: 1.05rem; color: var(--accent); margin: 24px 0 10px;
+    display: flex; align-items: center; gap: 8px;
+  }
+  section p, section li { color: var(--text-muted); font-size: 0.92rem; }
+  section li { margin: 4px 0; }
+  section ul, section ol { padding-left: 20px; }
+
+  /* Graph wraps */
+  .graph-wrap { position: relative; margin: 20px 0; border: 1px solid var(--border); border-radius: 10px; overflow: hidden; background: var(--bg); }
+  .graph-toolbar {
+    position: absolute; top: 12px; right: 12px; z-index: 10;
+    display: flex; gap: 4px;
+    background: rgba(22,27,34,0.9); backdrop-filter: blur(4px);
+    border: 1px solid var(--border); border-radius: 8px; padding: 4px 5px;
+  }
+  .graph-toolbar button {
+    background: transparent; border: none;
+    color: var(--text-muted); width: 28px; height: 26px;
+    border-radius: 4px; cursor: pointer; font-size: 14px;
+    display: flex; align-items: center; justify-content: center;
+    transition: all 0.12s;
+  }
+  .graph-toolbar button:hover { background: rgba(88,166,255,0.15); color: var(--accent); }
+  .graph-toolbar .sep { width: 1px; background: var(--border); margin: 2px 3px; }
+
+  /* Cards */
+  .info-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 14px; margin: 16px 0; }
+  .card {
+    background: var(--surface); border: 1px solid var(--border); border-radius: 10px;
+    padding: 16px; transition: border-color 0.15s;
+  }
+  .card:hover { border-color: var(--accent); }
+  .card h4 { font-size: 0.95rem; margin-bottom: 6px; display: flex; align-items: center; gap: 8px; }
+  .card h4 .dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; }
+  .card p { font-size: 0.85rem; color: var(--text-muted); }
+  .card code { font-size: 0.8rem; color: var(--cyan); }
+
+  /* Step boxes */
+  .step { margin: 10px 0; padding: 14px 16px; border-left: 3px solid var(--accent); background: var(--surface); border-radius: 0 8px 8px 0; }
+  .step h4 { font-size: 0.9rem; color: var(--accent); margin-bottom: 8px; }
+  .step code { color: var(--cyan); background: rgba(57,210,192,0.08); padding: 1px 5px; border-radius: 3px; font-size: 0.82rem; }
+  .step-warn { border-left-color: var(--yellow); }
+  .step-warn h4 { color: var(--yellow); }
+  .step-danger { border-left-color: var(--red); }
+  .step-danger h4 { color: var(--red); }
+
+  /* Code blocks */
+  .cmd-block {
+    background: #1c2128; border: 1px solid var(--border); border-radius: 8px;
+    padding: 14px 16px; margin: 12px 0; font-family: 'JetBrains Mono', 'Fira Code', monospace;
+    font-size: 0.82rem; overflow-x: auto; color: #e6edf3; white-space: pre-wrap;
+  }
+  .cmd-block .prompt { color: var(--green); }
+  .cmd-block .comment { color: var(--text-muted); font-style: italic; }
+  .cmd-block .key { color: var(--yellow); }
+  .cmd-block .str { color: var(--cyan); }
+  .cmd-block .err { color: var(--red); }
+
+  /* Tables */
+  table { width: 100%; border-collapse: collapse; margin: 14px 0; font-size: 0.85rem; }
+  th, td { text-align: left; padding: 8px 12px; border-bottom: 1px solid var(--border); }
+  th { color: var(--text-muted); font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; font-size: 0.75rem; }
+  td { color: var(--text); }
+  tr:hover td { background: rgba(88,166,255,0.04); }
+
+  hr { border: none; border-top: 1px solid var(--border); margin: 32px 0; }
+
+  .back-top { display: block; text-align: right; margin: 16px 0; }
+  .back-top a { color: var(--accent); text-decoration: none; font-size: 0.8rem; }
+  .back-top a:hover { text-decoration: underline; }
+
+  footer { text-align: center; padding: 24px 0 8px; color: var(--text-muted); font-size: 0.8rem; border-top: 1px solid var(--border); margin-top: 40px; }
+
+  @media (max-width: 700px) {
+    .toc ul { columns: 1; }
+    .info-grid { grid-template-columns: 1fr; }
+    header h1 { font-size: 1.4rem; }
+    .step code { word-break: break-all; }
+  }
+</style>
+</head>
+<body>
+<div class="container">
+
+<header>
+  <h1>⚠️ Honcho — Disaster Recovery</h1>
+  <p class="subtitle">Procedimientos de recuperación ante desastres para el stack Honcho self-hosted (TGT One)</p>
+  <span class="badge">Última actualización: 11 Jun 2026</span>
+</header>
+
+<nav class="toc">
+  <h2>Contenidos</h2>
+  <ul>
+    <li><a href="#scenarios">1. Escenarios de Desastre</a></li>
+    <li><a href="#backup-flow">2. Flujo de Backup</a></li>
+    <li><a href="#repos">3. Repositorios</a></li>
+    <li><a href="#from-scratch">4. Instalación Desde Cero</a></li>
+    <li><a href="#restore-db">5. Restaurar BD PostgreSQL</a></li>
+    <li><a href="#restore-hermes">6. Restaurar Hermes</a></li>
+    <li><a href="#restore-script">7. Restaurar Script de Backup</a></li>
+    <li><a href="#config">8. Configuración Clave</a></li>
+    <li><a href="#troubleshoot">9. Troubleshooting</a></li>
+  </ul>
+</nav>
+
+<!-- ======= 1. Escenarios ======= -->
+<section id="scenarios">
+  <h2><span class="num">01</span> Escenarios de Desastre</h2>
+  <p>Tres niveles de desastre, ordenados por severidad:</p>
+
+  <div class="graph-wrap" id="g-scenarios" style="height:340px"></div>
+
+  <div class="info-grid">
+    <div class="card" style="border-color: var(--yellow);">
+      <h4><span class="dot" style="background:var(--yellow)"></span> Nivel 1 — Bajo</h4>
+      <p><strong>Qué pasa:</strong> Docker compose detenido, contenedores rotos, config corrompida.</p>
+      <p><strong>Daño:</strong> Los volúmenes Docker sobreviven. BD y datos intactos.</p>
+      <p><strong>Recuperación:</strong> <code>docker compose up -d --build</code></p>
+    </div>
+    <div class="card" style="border-color: var(--orange);">
+      <h4><span class="dot" style="background:var(--orange)"></span> Nivel 2 — Alto</h4>
+      <p><strong>Qué pasa:</strong> Volúmenes Docker perdidos (reset WSL de Docker, disco corrupto).</p>
+      <p><strong>Daño:</strong> BD PostgreSQL perdida. Código en Git intacto.</p>
+      <p><strong>Recuperación:</strong> Instalar desde cero + restaurar backup SQL</p>
+    </div>
+    <div class="card" style="border-color: var(--red);">
+      <h4><span class="dot" style="background:var(--red)"></span> Nivel 3 — Crítico</h4>
+      <p><strong>Qué pasa:</strong> Máquina completa perdida (WSL reseteado, disco formateado, laptop robada).</p>
+      <p><strong>Daño:</strong> BD + config + código local perdidos. Solo sobrevive GitHub + OneDrive.</p>
+      <p><strong>Recuperación:</strong> Clonar repos + restaurar backup desde OneDrive</p>
+    </div>
+  </div>
+</section>
+<div class="back-top"><a href="#">↑ volver</a></div>
+
+<!-- ======= 2. Flujo de Backup ======= -->
+<section id="backup-flow">
+  <h2><span class="num">02</span> Flujo de Backup</h2>
+  <p>Ejecutado automáticamente todos los días a las <strong>4:00 AM</strong> vía cron de Hermes.</p>
+
+  <div class="graph-wrap" id="g-backup" style="height:400px"></div>
+
+  <h3>Qué se backupea</h3>
+  <table>
+    <tr><th>Contenido</th><th>Origen</th><th>Tamaño</th><th>Rota</th></tr>
+    <tr><td>PostgreSQL (pg_dump)</td><td>Container honcho-database-1</td><td>~20 KB gz</td><td>3</td></tr>
+    <tr><td>Config: .env</td><td>~/develop/honcho/.env</td><td>~3 KB</td><td>3</td></tr>
+    <tr><td>Config: config.toml</td><td>~/develop/honcho/config.toml</td><td>~5 KB</td><td>3</td></tr>
+    <tr><td>Config: docker-compose.yml</td><td>~/develop/honcho/</td><td>~3 KB</td><td>3</td></tr>
+    <tr><td>Script: backup-honcho.sh</td><td>~/.hermes/scripts/</td><td>~4 KB</td><td>3</td></tr>
+    <tr><td>Hermes state.db</td><td>~/.hermes/state.db</td><td>~400 MB</td><td>3</td></tr>
+    <tr><td>Hermes kanban.db</td><td>~/.hermes/kanban.db</td><td>~140 KB</td><td>3</td></tr>
+    <tr><td>Profiles state.db</td><td>~/.hermes/profiles/*/</td><td>~30 MB c/u</td><td>3</td></tr>
+  </table>
+
+  <h3>Destinos</h3>
+  <div class="info-grid">
+    <div class="card">
+      <h4>💾 Local</h4>
+      <p><code>~/backups/honcho/{db,config,sqlite}/</code></p>
+      <p>Respaldo primario. Rotación mantiene 3 copias.</p>
+    </div>
+    <div class="card">
+      <h4>☁️ OneDrive</h4>
+      <p><code>C:\Users\JAM\OneDrive\Documentos\Hermes-Bacups\</code></p>
+      <p>Respaldo off-site. Sincronizado post-backup vía rsync.</p>
+    </div>
+    <div class="card">
+      <h4>🐙 GitHub</h4>
+      <p><code>github.com/tgtjam/honcho</code></p>
+      <p>Código y configuración de setup. No incluye .env ni BD.</p>
+    </div>
+  </div>
+</section>
+<div class="back-top"><a href="#">↑ volver</a></div>
+
+<!-- ======= 3. Repositorios ======= -->
+<section id="repos">
+  <h2><span class="num">03</span> Repositorios</h2>
+  <p>El código y la configuración están en 2 repositorios GitHub privados (cuenta <strong>tgtjam</strong>):</p>
+
+  <table>
+    <tr><th>Repo</th><th>URL</th><th>Contenido</th></tr>
+    <tr><td><strong>tgtjam/honcho</strong></td><td><code>github.com/tgtjam/honcho.git</code></td><td>Fork de plastic-labs/honcho + nuestras modificaciones (Dockerfile, docker-compose con ollama+deriver, config DeepSeek, docs)</td></tr>
+    <tr><td><strong>tgtjam/honcho-tgtjam-setup</strong></td><td><code>github.com/tgtjam/honcho-tgtjam-setup.git</code></td><td>Solo archivos de configuración: docker-compose.yml, config.toml, .env.example, scripts, HERMES-SETUP.md</td></tr>
+  </table>
+
+  <div class="step step-warn">
+    <h4>⚠️ Importante</h4>
+    <p>El archivo <code>.env</code> con la API key de DeepSeek <strong>NO está en Git</strong>. Solo existe en:
+    <code>~/develop/honcho/.env</code> (WSL) y en los backups de OneDrive.</p>
+  </div>
+</section>
+<div class="back-top"><a href="#">↑ volver</a></div>
+
+<!-- ======= 4. Instalación Desde Cero ======= -->
+<section id="from-scratch">
+  <h2><span class="num">04</span> Instalación Desde Cero</h2>
+  <p>Procedimiento completo si pierde todo (WSL reseteado, clon fresco).</p>
+
+  <div class="graph-wrap" id="g-install" style="height:380px"></div>
+
+  <div class="step">
+    <h4>1️⃣ Clonar el repo de setup</h4>
+    <div class="cmd-block"><span class="prompt">$</span> git clone https://github.com/tgtjam/honcho-tgtjam-setup.git
+<span class="prompt">$</span> cd honcho-tgtjam-setup</div>
+  </div>
+
+  <div class="step">
+    <h4>2️⃣ Configurar .env</h4>
+    <div class="cmd-block"><span class="prompt">$</span> cp .env.example .env
+<span class="prompt">$</span> nano .env   <span class="comment"># pegar LLM_OPENAI_API_KEY real</span></div>
+    <p>Si el backup está en OneDrive, copiar el .env directamente:</p>
+    <div class="cmd-block"><span class="prompt">$</span> cp /mnt/c/Users/JAM/OneDrive/Documentos/Hermes-Bacups/config/env_20260611_033622 .env</div>
+  </div>
+
+  <div class="step">
+    <h4>3️⃣ Clonar Honcho upstream + aplicar nuestra config</h4>
+    <div class="cmd-block"><span class="prompt">$</span> cd ..
+<span class="prompt">$</span> git clone https://github.com/tgtjam/honcho.git
+<span class="prompt">$</span> cd honcho
+<span class="prompt">$</span> cp ../honcho-tgtjam-setup/docker-compose.yml .
+<span class="prompt">$</span> cp ../honcho-tgtjam-setup/config.toml .
+<span class="prompt">$</span> cp ../honcho-tgtjam-setup/.env.example .
+<span class="prompt">$</span> # copiar el .env real desde el paso 2</div>
+  </div>
+
+  <div class="step">
+    <h4>4️⃣ Descargar modelo de embeddings</h4>
+    <div class="cmd-block"><span class="prompt">$</span> docker compose up -d ollama
+<span class="prompt">$</span> docker exec honcho-ollama-1 ollama pull nomic-embed-text-v2-moe</div>
+  </div>
+
+  <div class="step">
+    <h4>5️⃣ Construir y levantar todo</h4>
+    <div class="cmd-block"><span class="prompt">$</span> docker compose up -d --build</div>
+  </div>
+
+  <div class="step">
+    <h4>6️⃣ Si hay mismatch de dimensiones de embedding</h4>
+    <div class="cmd-block"><span class="prompt">$</span> docker compose stop api
+<span class="prompt">$</span> docker compose run --rm --entrypoint python api \
+  scripts/configure_embeddings.py --yes
+<span class="prompt">$</span> docker compose up -d api</div>
+  </div>
+
+  <div class="step step-warn">
+    <h4>7️⃣ Restaurar backup SQL (si existe)</h4>
+    <p>Si estás recuperando de un desastre Nivel 2+, NO uses la BD vacía. Ve a la <a href="#restore-db" style="color:var(--accent)">sección de restore</a>.</p>
+  </div>
+
+  <div class="step">
+    <h4>8️⃣ Verificar</h4>
+    <div class="cmd-block"><span class="prompt">$</span> curl http://localhost:8000/health
+<span class="comment">{"status":"ok"}</span>
+<span class="prompt">$</span> docker compose ps
+<span class="comment"># todos healthy/up</span></div>
+  </div>
+</section>
+<div class="back-top"><a href="#">↑ volver</a></div>
+
+<!-- ======= 5. Restaurar BD PostgreSQL ======= -->
+<section id="restore-db">
+  <h2><span class="num">05</span> Restaurar BD PostgreSQL</h2>
+  <p>Para desastres Nivel 2 (volúmenes Docker perdidos).</p>
+
+  <div class="step step-danger">
+    <h4>⚠️ Precaución</h4>
+    <p>La BD debe estar vacía antes de restaurar. Si hay datos existentes, el pg_restore fallará con duplicados.</p>
+  </div>
+
+  <div class="step">
+    <h4>1️⃣️ Asegurar que el contenedor database esté corriendo</h4>
+    <div class="cmd-block"><span class="prompt">$</span> docker compose up -d database
+<span class="prompt">$</span> sleep 5</div>
+  </div>
+
+  <div class="step">
+    <h4>2️⃣️ Elegir el backup más reciente</h4>
+    <div class="cmd-block"><span class="prompt">$</span> ls -1t ~/backups/honcho/db/*.sql.gz | head -1
+<span class="comment"># o desde OneDrive:</span>
+<span class="prompt">$</span> ls -1t /mnt/c/Users/JAM/OneDrive/Documentos/Hermes-Bacups/db/*.sql.gz | head -1</div>
+  </div>
+
+  <div class="step">
+    <h4>3️⃣️ Restaurar</h4>
+    <div class="cmd-block"><span class="prompt">$</span> gunzip -c ~/backups/honcho/db/honcho_20260611_033622.sql.gz \
+  | docker exec -i honcho-database-1 psql -U postgres -d postgres</div>
+  </div>
+
+  <div class="step">
+    <h4>4️⃣️ Verificar dimensiones de embedding</h4>
+    <p>Si la BD tenía vectores con dimensiones distintas a 768 (el modelo actual), el API no arranca:</p>
+    <div class="cmd-block"><span class="err">StartupValidationError:</span> public.documents.embedding dim (X) does not match EMBEDDING_VECTOR_DIMENSIONS (Y)</div>
+    <p>Solución:</p>
+    <div class="cmd-block"><span class="prompt">$</span> docker compose stop api
+<span class="prompt">$</span> docker compose run --rm --entrypoint python api \
+  scripts/configure_embeddings.py --yes
+<span class="prompt">$</span> docker compose up -d api</div>
+  </div>
+
+  <div class="step">
+    <h4>5️⃣️ Verificar</h4>
+    <div class="cmd-block"><span class="prompt">$</span> curl http://localhost:8000/health
+<span class="comment"># {"status":"ok"}</span></div>
+  </div>
+</section>
+<div class="back-top"><a href="#">↑ volver</a></div>
+
+<!-- ======= 6. Restaurar Hermes ======= -->
+<section id="restore-hermes">
+  <h2><span class="num">06</span> Restaurar Hermes (state.db)</h2>
+  <p>Para desastres Nivel 3 (WSL reseteado).</p>
+
+  <div class="step step-warn">
+    <h4>⚠️ Nota importante</h4>
+    <p>Los archivos SQLite de Hermes están en <strong>el filesystem de WSL</strong> (<code>/home/jam/.hermes/</code>), NO dentro de Docker. Sobreviven a un reseteo del backend de Docker, pero se pierden si se resetea WSL completo.</p>
+  </div>
+
+  <div class="step">
+    <h4>1️⃣️ Copiar desde OneDrive</h4>
+    <div class="cmd-block"><span class="prompt">$</span> cp /mnt/c/Users/JAM/OneDrive/Documentos/Hermes-Bacups/sqlite/state_20260611_033622.db \
+  ~/.hermes/state.db
+<span class="prompt">$</span> cp /mnt/c/Users/JAM/OneDrive/Documentos/Hermes-Bacups/sqlite/kanban_20260611_033622.db \
+  ~/.hermes/kanban.db</div>
+  </div>
+
+  <div class="step">
+    <h4>2️⃣️ Restaurar perfiles</h4>
+    <div class="cmd-block"><span class="comment"># Cada perfil tiene su propio state.db</span>
+<span class="prompt">$</span> for f in /mnt/c/Users/JAM/OneDrive/Documentos/Hermes-Bacups/sqlite/*_state_*.db; do
+  prof=$(basename "$f" | sed 's/_state_.*//')
+  mkdir -p ~/.hermes/profiles/"$prof"
+  cp "$f" ~/.hermes/profiles/"$prof"/state.db
+done</div>
+  </div>
+
+  <div class="step">
+    <h4>3️⃣️ Restaurar script de backup</h4>
+    <div class="cmd-block"><span class="prompt">$</span> mkdir -p ~/.hermes/scripts
+<span class="prompt">$</span> cp /mnt/c/Users/JAM/OneDrive/Documentos/Hermes-Bacups/config/backup-honcho_20260611_033622.sh \
+  ~/.hermes/scripts/backup-honcho.sh
+<span class="prompt">$</span> chmod +x ~/.hermes/scripts/backup-honcho.sh</div>
+  </div>
+</section>
+<div class="back-top"><a href="#">↑ volver</a></div>
+
+<!-- ======= 7. Restaurar Script de Backup ======= -->
+<section id="restore-script">
+  <h2><span class="num">07</span> Restaurar Script de Backup</h2>
+  <p>Si pierdes solo el script <code>~/.hermes/scripts/backup-honcho.sh</code> pero el backup en OneDrive está intacto:</p>
+
+  <div class="info-grid">
+    <div class="card">
+      <h4>📄 Desde OneDrive</h4>
+      <p>Copia el archivo <code>config/backup-honcho_*.sh</code> más reciente a <code>~/.hermes/scripts/</code></p>
+      <div class="cmd-block" style="margin: 8px 0 0; font-size:0.75rem;"><span class="prompt">$</span> cp /mnt/c/.../config/backup-honcho_*.sh ~/.hermes/scripts/backup-honcho.sh
+<span class="prompt">$</span> chmod +x ~/.hermes/scripts/backup-honcho.sh</div>
+    </div>
+    <div class="card">
+      <h4>🐙 Desde GitHub</h4>
+      <p>El script NO está en ningún repo de GitHub. Solo está en el filesystem local (<code>~/.hermes/scripts/</code>) y en los backups de OneDrive.</p>
+    </div>
+    <div class="card">
+      <h4>🔄 Recrear</h4>
+      <p>Si no hay backup (desastre total), Hermes puede regenerar el script desde la documentación HTML.</p>
+    </div>
+  </div>
+
+  <h3>Recrear el cron job de Hermes</h3>
+  <div class="cmd-block"><span class="prompt">$</span> hermes cronjob create \
+  --name "honcho-backup-daily" \
+  --schedule "0 4 * * *" \
+  --script backup-honcho.sh \
+  --no-agent \
+  --deliver local</div>
+</section>
+<div class="back-top"><a href="#">↑ volver</a></div>
+
+<!-- ======= 8. Configuración Clave ======= -->
+<section id="config">
+  <h2><span class="num">08</span> Configuración Clave</h2>
+
+  <h3>Embeddings</h3>
+  <table>
+    <tr><th>Variable</th><th>Valor</th></tr>
+    <tr><td>EMBEDDING_MODEL_CONFIG__MODEL</td><td>nomic-embed-text-v2-moe</td></tr>
+    <tr><td>EMBEDDING_VECTOR_DIMENSIONS</td><td>768</td></tr>
+    <tr><td>EMBEDDING_MODEL_CONFIG__OVERRIDES__BASE_URL</td><td>http://ollama:11434/v1</td></tr>
+  </table>
+  <p>Si la BD tiene dimensiones distintas a 768, el API no arranca. Correr <code>configure_embeddings.py</code> para migrar.</p>
+
+  <h3>Modelos LLM</h3>
+  <table>
+    <tr><th>Función</th><th>Modelo</th></tr>
+    <tr><td>Deriver (observaciones)</td><td>deepseek-v4-flash</td></tr>
+    <tr><td>Dialectic minimal/low</td><td>deepseek-v4-flash</td></tr>
+    <tr><td>Dialectic medium/high/max</td><td>deepseek-v4-pro</td></tr>
+    <tr><td>Summary</td><td>deepseek-v4-pro</td></tr>
+    <tr><td>Dream (consolidación)</td><td>deepseek-v4-pro</td></tr>
+  </table>
+
+  <h3>Puertos</h3>
+  <table>
+    <tr><th>Servicio</th><th>Puerto (host)</th></tr>
+    <tr><td>API Honcho</td><td>127.0.0.1:8000</td></tr>
+    <tr><td>PostgreSQL</td><td>127.0.0.1:5432</td></tr>
+    <tr><td>Redis</td><td>127.0.0.1:6379</td></tr>
+    <tr><td>Ollama</td><td>127.0.0.1:11434</td></tr>
+  </table>
+</section>
+<div class="back-top"><a href="#">↑ volver</a></div>
+
+<!-- ======= 9. Troubleshooting ======= -->
+<section id="troubleshoot">
+  <h2><span class="num">09</span> Troubleshooting</h2>
+
+  <h3>🛑 El API no arranca</h3>
+  <div class="cmd-block"><span class="prompt">$</span> docker compose logs api <span class="comment"># ver el error exacto</span></div>
+  <table>
+    <tr><th>Síntoma</th><th>Causa</th><th>Solución</th></tr>
+    <tr><td><code>StartupValidationError: embedding dim mismatch</code></td><td>La BD tiene dimensión de vectores distinta a 768</td><td><code>configure_embeddings.py --yes</code></td></tr>
+    <tr><td><code>could not connect to server</code></td><td>DB no responde</td><td><code>docker compose logs database</code></td></tr>
+    <tr><td><code>401 Unauthorized</code></td><td>API key inválida/expirada</td><td>Revisar <code>LLM_OPENAI_API_KEY</code> en .env</td></tr>
+    <tr><td>Container exits immediately</td><td>Error en entrypoint o migración</td><td><code>docker compose logs api</code> para diagnóstico</td></tr>
+  </table>
+
+  <h3>🛑 La BD se perdió</h3>
+  <p>Los volúmenes Docker (<code>honcho_pgdata</code>, <code>honcho_redis-data</code>) persisten entre reinicios del contenedor pero <strong>no sobreviven a un reseteo del backend de WSL</strong>.</p>
+  <p>Solución: restaurar desde backup SQL (sección <a href="#restore-db" style="color:var(--accent)">#restore-db</a>).</p>
+
+  <h3>🛑 Honcho no inyecta contexto (memory no funciona)</h3>
+  <table>
+    <tr><th>Verificación</th><th>Comando</th></tr>
+    <tr><td>Estado servicios</td><td><code>docker compose ps</code> → api debe estar healthy</td></tr>
+    <tr><td>Healthcheck</td><td><code>curl localhost:8000/health</code> → {"status":"ok"}</td></tr>
+    <tr><td>API key</td><td><code>grep LLM_OPENAI_API_KEY ~/develop/honcho/.env</code></td></tr>
+    <tr><td>Hermes config</td><td><code>hermes config get honcho.enabled</code> → debe ser true</td></tr>
+    <tr><td>Deriver activo</td><td><code>docker compose logs --tail=10 deriver</code> → debe mostrar procesamiento</td></tr>
+  </table>
+
+  <h3>🛑 El backup no se ejecuta</h3>
+  <div class="cmd-block"><span class="prompt">$</span> hermes cronjob list      <span class="comment"># verificar que el cron existe</span>
+<span class="prompt">$</span> bash ~/.hermes/scripts/backup-honcho.sh  <span class="comment"># ejecución manual</span></div>
+
+  <h3>🔄 Forzar el cron para que corra ahora</h3>
+  <div class="cmd-block"><span class="prompt">$</span> hermes cronjob run --job-id 59f646c7800c</div>
+</section>
+<div class="back-top"><a href="#">↑ volver</a></div>
+
+<footer>
+  <p>TGT One · Honcho v3 · DeepSeek + Ollama</p>
+  <p style="font-size:0.75rem; margin-top:4px;">Backup diario 4 AM · Rotación 3 · OneDrive + Local</p>
+</footer>
+
+</div><!-- /container -->
+
+<script>
+const C = {
+  build: '#58a6ff', transfer: '#39d2c0', deploy: '#3fb950',
+  rollback: '#d29922', artifact: '#bc8cff', server: '#f78166',
+  local: '#58a6ff', ws: '#39d2c0', cache: '#f778ba',
+  backend: '#58a6ff', surface: '#1c2128', border: '#30363d',
+  text: '#e6edf3', muted: '#8b949e', red: '#f85149',
+};
+
+function rect(id, x, y, label, color, opts = {}) {
+  return {
+    id, type: 'rect',
+    style: {
+      x, y,
+      size: opts.w ? [opts.w, opts.h || 40] : [140, 40],
+      fill: opts.fill || C.surface, stroke: color, radius: opts.radius || 6,
+      labelText: label, labelFill: opts.labelColor || color,
+      labelFontSize: opts.fontSize || 12, labelFontWeight: opts.bold ? 600 : 400,
+    },
+  };
+}
+
+function edge(from, to, color, label) {
+  const e = { source: from, target: to, style: { stroke: color || C.border } };
+  if (label) e.style.labelText = label;
+  return e;
+}
+
+function dashedEdge(from, to, color, label) {
+  const e = { source: from, target: to, style: { stroke: color || C.muted, lineDash: [5, 4], endArrow: false } };
+  if (label) e.style.labelText = label;
+  return e;
+}
+
+function initGraph(containerId, data, opts = {}) {
+  const container = document.getElementById(containerId);
+  if (!container) return null;
+  const rect_ = container.getBoundingClientRect();
+  const w = rect_.width || container.clientWidth || 800;
+  const h = opts.height || container.clientHeight || 300;
+  container.style.width = w + 'px';
+  container.style.height = h + 'px';
+
+  let graph;
+  try {
+    const graphOpts = {
+      container, width: w, height: h, autoFit: { type: 'view' },
+      data,
+      node: { style: { labelPlacement: 'center', labelFill: '#e6edf3', lineWidth: 1.5, cursor: 'pointer' } },
+      edge: { style: { stroke: '#30363d', lineWidth: 2, endArrow: true, labelBackground: true, labelBackgroundFill: '#0d1117', labelBackgroundOpacity: 0.9, labelFill: '#8b949e', labelFontSize: 11 } },
+      behaviors: ['drag-canvas'],
+    };
+    if (opts.layout) {
+      graphOpts.layout = opts.layout;
+      if (data.nodes) data.nodes.forEach(n => { delete n.style.x; delete n.style.y; });
+    }
+    graph = new G6.Graph(graphOpts);
+    graph.render();
+    try {
+      const cv = graph.getCanvas();
+      if (cv && cv.getContainer()) {
+        cv.getContainer().addEventListener('wheel', (e) => {
+          if (e.ctrlKey || e.metaKey) { e.preventDefault(); e.stopPropagation(); const delta = e.deltaY > 0 ? 0.88 : 1.12; graph.zoomTo(Math.max(0.2, Math.min(5, graph.getZoom() * delta))); }
+        }, { passive: false });
+      }
+    } catch (_) {}
+    graph.on('canvas:dblclick', () => { graph.zoomTo(1); graph.fitView({ padding: [40, 40] }); });
+  } catch (err) { console.error('[G6] error for', containerId, err); return null; }
+  return graph;
+}
+
+function addToolbar(graphId, graph) {
+  if (!graph) return;
+  const wrap = document.getElementById(graphId);
+  if (!wrap || !wrap.classList.contains('graph-wrap')) return;
+  const tb = document.createElement('div');
+  tb.className = 'graph-toolbar';
+  tb.innerHTML = `<button title="Centrar" data-action="fit">⌂</button><button title="Zoom +" data-action="zoomin">⊕</button><button title="Zoom −" data-action="zoomout">⊖</button><div class="sep"></div><button title="Reset" data-action="reset">⟲</button>`;
+  wrap.appendChild(tb);
+  tb.addEventListener('click', (e) => {
+    const btn = e.target.closest('button');
+    if (!btn || graph.destroyed) return;
+    const action = btn.dataset.action;
+    try {
+      if (action === 'fit') graph.fitView({ padding: [40, 40] });
+      else if (action === 'zoomin') graph.zoomTo(Math.min(graph.getZoom() * 1.3, 3));
+      else if (action === 'zoomout') graph.zoomTo(Math.max(graph.getZoom() / 1.3, 0.3));
+      else if (action === 'reset') { graph.zoomTo(1); graph.fitView({ padding: [40, 40] }); }
+    } catch (_) {}
+  });
+}
+
+// ========== GRAPH DATA ==========
+
+// 1. Escenarios
+const scenData = {
+  nodes: [
+    rect('n1', 30, 10, '🟡 Nivel 1\nDocker caído', C.rollback, { w: 140, h: 45, fontSize: 11 }),
+    rect('n1a', 240, 10, 'Volúmenes intactos\nBD + datos OK', C.deploy, { w: 150, h: 45, fontSize: 11 }),
+    rect('n1b', 450, 10, 'docker compose\nup -d --build', C.accent, { w: 150, h: 45, fontSize: 11 }),
+    rect('n2', 30, 110, '🟠 Nivel 2\nVolúmenes perdidos', C.rollback, { w: 140, h: 45, fontSize: 11 }),
+    rect('n2a', 240, 110, 'BD perdida\nCódigo en Git ✅', C.red, { w: 150, h: 45, fontSize: 11 }),
+    rect('n2b', 450, 110, 'Instalar desde\ncero + restore SQL', C.accent, { w: 150, h: 45, fontSize: 11 }),
+    rect('n3', 30, 210, '🔴 Nivel 3\nMáquina perdida', C.rollback, { w: 140, h: 45, fontSize: 11 }),
+    rect('n3a', 240, 210, 'Todo perdido\nSolo GitHub + OneDrive', C.red, { w: 160, h: 45, fontSize: 11 }),
+    rect('n3b', 460, 210, 'Clonar repos\n+ restore OneDrive', C.accent, { w: 150, h: 45, fontSize: 11 }),
+  ],
+  edges: [
+    edge('n1', 'n1a', C.rollback), edge('n1a', 'n1b', C.deploy),
+    edge('n2', 'n2a', C.rollback), edge('n2a', 'n2b', C.deploy),
+    edge('n3', 'n3a', C.rollback), edge('n3a', 'n3b', C.deploy),
+  ],
+};
+
+// 2. Flujo de Backup
+const backupData = {
+  nodes: [
+    rect('b-cron', 30, 10, '⏰ Cron 4 AM', C.rollback, { w: 120, h: 35, fontSize: 11 }),
+    rect('b-pg', 50, 90, 'PostgreSQL\ndump', C.deploy, { w: 130, h: 40, fontSize: 11 }),
+    rect('b-env', 230, 90, '.env', C.accent, { w: 80, h: 35, fontSize: 11 }),
+    rect('b-config', 340, 90, 'config toml\ncompose', C.accent, { w: 100, h: 40, fontSize: 11 }),
+    rect('b-script', 470, 90, 'backup\n-honcho.sh', C.artifact, { w: 90, h: 40, fontSize: 11 }),
+    rect('b-hermes', 130, 170, 'Hermes\nstate.db', C.cache, { w: 100, h: 35, fontSize: 11 }),
+    rect('b-kanban', 270, 170, 'kanban.db\n+ profiles', C.cache, { w: 110, h: 35, fontSize: 11 }),
+    rect('b-local', 70, 260, '📁 Local\n~/backups/honcho/', C.deploy, { w: 150, h: 40, fontSize: 11 }),
+    rect('b-od', 280, 260, '☁️ OneDrive\nHermes-Bacups', C.accent, { w: 150, h: 40, fontSize: 11 }),
+  ],
+  edges: [
+    edge('b-cron', 'b-pg', C.rollback), edge('b-cron', 'b-env', C.rollback),
+    edge('b-cron', 'b-config', C.rollback), edge('b-cron', 'b-script', C.rollback),
+    edge('b-cron', 'b-hermes', C.rollback), edge('b-cron', 'b-kanban', C.rollback),
+    edge('b-pg', 'b-local', C.deploy), edge('b-env', 'b-local', C.deploy),
+    edge('b-config', 'b-local', C.deploy), edge('b-script', 'b-local', C.deploy),
+    edge('b-hermes', 'b-local', C.deploy), edge('b-kanban', 'b-local', C.deploy),
+    edge('b-local', 'b-od', C.accent, 'rsync'),
+  ],
+};
+
+// 4. Instalación
+const installData = {
+  nodes: [
+    rect('i1', 30, 10, '1. Clone setup\nrepo', C.accent, { w: 130, h: 40, fontSize: 11 }),
+    rect('i2', 210, 10, '2. .env\n(config/keys)', C.rollback, { w: 130, h: 40, fontSize: 11 }),
+    rect('i3', 30, 100, '3. Clone main\nrepo + config', C.accent, { w: 130, h: 40, fontSize: 11 }),
+    rect('i4', 210, 100, '4. Pull Ollama\nmodel', C.transfer, { w: 130, h: 40, fontSize: 11 }),
+    rect('i5', 30, 190, '5. docker compose\nup -d --build', C.deploy, { w: 130, h: 40, fontSize: 11 }),
+    rect('i6', 220, 190, '6. configure_\nembeddings.py', C.rollback, { w: 140, h: 40, fontSize: 11 }),
+    rect('i7', 410, 100, '7. Restore\nbackup SQL', C.red, { w: 130, h: 40, fontSize: 11 }),
+    rect('i8', 410, 190, '8. Verify\ncurl /health', C.deploy, { w: 130, h: 40, fontSize: 11 }),
+  ],
+  edges: [
+    edge('i1', 'i2', C.accent), edge('i2', 'i3', C.rollback),
+    edge('i3', 'i4', C.accent), edge('i4', 'i5', C.transfer),
+    edge('i5', 'i6', C.deploy), edge('i6', 'i8', C.rollback),
+    edge('i3', 'i7', C.red, 'si hay backup'), edge('i7', 'i8', C.deploy),
+  ],
+};
+
+// ========== RENDER ==========
+const graphs = [
+  { id: 'g-scenarios', data: scenData, height: 340, layout: { type: 'dagre', rankdir: 'TB', nodesep: 30, ranksep: 40, align: 'UL' } },
+  { id: 'g-backup', data: backupData, height: 400, layout: { type: 'dagre', rankdir: 'TB', nodesep: 30, ranksep: 40, align: 'UL' } },
+  { id: 'g-install', data: installData, height: 380, layout: { type: 'dagre', rankdir: 'LR', nodesep: 30, ranksep: 40, align: 'UL' } },
+];
+
+(function() {
+  graphs.forEach((g, i) => {
+    setTimeout(() => {
+      const graph = initGraph(g.id, g.data, { height: g.height, layout: g.layout });
+      addToolbar(g.id, graph);
+    }, i * 100);
+  });
+})();
+</script>
+</body>
+</html>
