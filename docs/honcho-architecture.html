@@ -1,0 +1,702 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Honcho — Arquitectura y Operaciones</title>
+<script src="https://unpkg.com/@antv/g6@5/dist/g6.min.js"></script>
+<style>
+  :root {
+    --bg: #0d1117; --surface: #161b22; --border: #30363d;
+    --text: #e6edf3; --text-muted: #8b949e; --accent: #58a6ff;
+    --green: #3fb950; --cyan: #39d2c0; --yellow: #d29922;
+    --purple: #bc8cff; --orange: #f78166; --pink: #f778ba;
+  }
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, 'Segoe UI', 'Noto Sans', Helvetica, Arial, sans-serif;
+    background: var(--bg); color: var(--text); line-height: 1.6;
+    padding: 40px 24px;
+  }
+  .container { max-width: 1100px; margin: 0 auto; }
+
+  /* Header */
+  header { text-align: center; padding: 40px 0 20px; }
+  header h1 { font-size: 2.2rem; font-weight: 700; background: linear-gradient(135deg, var(--accent), var(--purple)); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
+  header .subtitle { color: var(--text-muted); font-size: 1rem; margin-top: 6px; }
+  header .badge { display: inline-block; background: var(--surface); border: 1px solid var(--border); border-radius: 20px; padding: 3px 14px; font-size: 0.8rem; color: var(--text-muted); margin-top: 8px; }
+
+  /* Index / TOC */
+  .toc { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 20px 24px; margin: 24px 0; }
+  .toc h2 { font-size: 0.9rem; text-transform: uppercase; letter-spacing: 1px; color: var(--text-muted); margin-bottom: 12px; }
+  .toc ul { list-style: none; columns: 2; column-gap: 24px; }
+  .toc li a { color: var(--accent); text-decoration: none; font-size: 0.9rem; display: block; padding: 4px 0; }
+  .toc li a:hover { text-decoration: underline; }
+
+  /* Sections */
+  section { margin: 40px 0; }
+  section h2 {
+    font-size: 1.4rem; font-weight: 600; color: var(--text);
+    padding-bottom: 8px; border-bottom: 1px solid var(--border);
+    margin-bottom: 20px; display: flex; align-items: center; gap: 10px;
+  }
+  section h2 .num { color: var(--text-muted); font-weight: 400; font-size: 0.9rem; }
+  section h3 { font-size: 1.05rem; color: var(--accent); margin: 20px 0 10px; }
+  section p, section li { color: var(--text-muted); font-size: 0.92rem; }
+
+  /* Graph wraps */
+  .graph-wrap { position: relative; margin: 20px 0; border: 1px solid var(--border); border-radius: 10px; overflow: hidden; background: var(--bg); }
+  .graph-toolbar {
+    position: absolute; top: 12px; right: 12px; z-index: 10;
+    display: flex; gap: 4px;
+    background: rgba(22,27,34,0.9); backdrop-filter: blur(4px);
+    border: 1px solid var(--border); border-radius: 8px; padding: 4px 5px;
+  }
+  .graph-toolbar button {
+    background: transparent; border: none;
+    color: var(--text-muted); width: 28px; height: 26px;
+    border-radius: 4px; cursor: pointer; font-size: 14px;
+    display: flex; align-items: center; justify-content: center;
+    transition: all 0.12s;
+  }
+  .graph-toolbar button:hover { background: rgba(88,166,255,0.15); color: var(--accent); }
+  .graph-toolbar .sep { width: 1px; background: var(--border); margin: 2px 3px; }
+
+  /* Info cards */
+  .info-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 14px; margin: 16px 0; }
+  .card {
+    background: var(--surface); border: 1px solid var(--border); border-radius: 10px;
+    padding: 16px; transition: border-color 0.15s;
+  }
+  .card:hover { border-color: var(--accent); }
+  .card h4 { font-size: 0.95rem; margin-bottom: 6px; display: flex; align-items: center; gap: 8px; }
+  .card p { font-size: 0.85rem; color: var(--text-muted); }
+  .card .dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; }
+
+  /* Code blocks */
+  .cmd-block {
+    background: #1c2128; border: 1px solid var(--border); border-radius: 8px;
+    padding: 14px 16px; margin: 12px 0; font-family: 'JetBrains Mono', 'Fira Code', monospace;
+    font-size: 0.82rem; overflow-x: auto; color: #e6edf3;
+  }
+  .cmd-block .prompt { color: var(--green); }
+  .cmd-block .comment { color: var(--text-muted); font-style: italic; }
+  .cmd-block .key { color: var(--yellow); }
+  .cmd-block .str { color: var(--cyan); }
+
+  /* Tables */
+  table { width: 100%; border-collapse: collapse; margin: 14px 0; font-size: 0.85rem; }
+  th, td { text-align: left; padding: 8px 12px; border-bottom: 1px solid var(--border); }
+  th { color: var(--text-muted); font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; font-size: 0.75rem; }
+  td { color: var(--text); }
+  tr:hover td { background: rgba(88,166,255,0.04); }
+
+  /* Lists */
+  ul, ol { padding-left: 20px; }
+  li { margin: 4px 0; }
+
+  /* Separator */
+  hr { border: none; border-top: 1px solid var(--border); margin: 32px 0; }
+
+  /* Back to top */
+  .back-top { display: block; text-align: right; margin: 16px 0; }
+  .back-top a { color: var(--accent); text-decoration: none; font-size: 0.8rem; }
+  .back-top a:hover { text-decoration: underline; }
+
+  /* Footer */
+  footer { text-align: center; padding: 24px 0 8px; color: var(--text-muted); font-size: 0.8rem; border-top: 1px solid var(--border); margin-top: 40px; }
+
+  .env-table td:first-child { font-family: monospace; font-size: 0.78rem; color: var(--cyan); }
+  .env-table td:nth-child(2) { font-family: monospace; font-size: 0.78rem; }
+  .tag { display: inline-block; border-radius: 4px; padding: 0 6px; font-size: 0.7rem; font-weight: 600; }
+  .tag-llm { background: rgba(88,166,255,0.15); color: var(--accent); }
+  .tag-emb { background: rgba(57,210,192,0.15); color: var(--cyan); }
+  .tag-store { background: rgba(188,140,255,0.15); color: var(--purple); }
+  .tag-queue { background: rgba(247,120,186,0.15); color: var(--pink); }
+
+  @media (max-width: 700px) {
+    .toc ul { columns: 1; }
+    .info-grid { grid-template-columns: 1fr; }
+    header h1 { font-size: 1.6rem; }
+  }
+</style>
+</head>
+<body>
+<div class="container">
+
+<header>
+  <h1>⚡ Honcho — Memoria para Agentes</h1>
+  <p class="subtitle">Infraestructura de memoria para agentes de IA con cognición social</p>
+  <span class="badge">TGT One · Self-hosted · DeepSeek + Ollama</span>
+</header>
+
+<nav class="toc">
+  <h2>Contenidos</h2>
+  <ul>
+    <li><a href="#overview">1. Visión General</a></li>
+    <li><a href="#architecture">2. Arquitectura</a></li>
+    <li><a href="#honcho-loop">3. Honcho Loop</a></li>
+    <li><a href="#deriver">4. Deriver Pipeline</a></li>
+    <li><a href="#dreamer">5. Dreamer</a></li>
+    <li><a href="#config">6. Configuración TGT</a></li>
+    <li><a href="#services">7. Servicios Docker</a></li>
+    <li><a href="#api">8. API Reference</a></li>
+    <li><a href="#commands">9. Comandos Útiles</a></li>
+  </ul>
+</nav>
+
+<!-- ======= 1. Visión General ======= -->
+<section id="overview">
+  <h2><span class="num">01</span> Visión General</h2>
+  <p>Honcho es infraestructura de memoria para agentes de IA. Almacena conversaciones y eventos, razona en segundo plano para extraer conclusiones sobre los participantes, y expone esas conclusiones a través de una API de chat, búsqueda semántica y representaciones estáticas.</p>
+
+  <div class="info-grid">
+    <div class="card"><h4>🧠 Reasoning-first</h4><p>Extrae conclusiones de conversaciones usando LLMs — no solo matching de chunks.</p></div>
+    <div class="card"><h4>👥 Peer-centric</h4><p>Usuarios, agentes y grupos son "peers" — entidades de primera clase que evolucionan.</p></div>
+    <div class="card"><h4>🔌 Multi-SDK</h4><p>SDK para Python, TypeScript, MCP, Hermes, Claude Code.</p></div>
+    <div class="card"><h4>🏠 Self-hosted</h4><p>Open source (AGPL-3.0), corre con Docker + pgvector + Redis.</p></div>
+  </div>
+
+  <h3>TGT One — Stack Local</h3>
+  <table>
+    <tr><th>Componente</th><th>Versión/Modelo</th><th>Rol</th></tr>
+    <tr><td>API</td><td>Python 3.13 · FastAPI</td><td>Servidor REST + WebSockets</td></tr>
+    <tr><td>Deriver</td><td>Background worker</td><td>Procesa cola de mensajes en 2do plano</td></tr>
+    <tr><td>Base de datos</td><td>pgvector/pgvector:pg15</td><td>PostgreSQL + vectores (dimensión 768)</td></tr>
+    <tr><td>Redis</td><td>8.2</td><td>Cola de mensajes, caché de representaciones</td></tr>
+    <tr><td>Ollama</td><td>latest (con GPU NVIDIA)</td><td>Embeddings locales (nomic-embed-text-v2-moe)</td></tr>
+    <tr><td>LLM principal</td><td>DeepSeek v4 Flash / Pro</td><td>Deriver, dialéctica, resúmenes, dreaming</td></tr>
+  </table>
+</section>
+<div class="back-top"><a href="#">↑ volver</a></div>
+
+<!-- ======= 2. Arquitectura ======= -->
+<section id="architecture">
+  <h2><span class="num">02</span> Arquitectura</h2>
+  <p>Honcho se divide en <strong>tres planos</strong>: Storage (síncrono), Insights (asíncrono), y Embeddings (local).</p>
+
+  <div class="graph-wrap" id="g-arch" style="height:420px"></div>
+
+  <h3>Componentes</h3>
+  <div class="info-grid">
+    <div class="card">
+      <h4><span class="dot" style="background:#58a6ff"></span> API (FastAPI)</h4>
+      <p>Puerta de entrada REST. CRUD de workspaces, peers, sessions, messages. Endpoint de chat y búsqueda.</p>
+    </div>
+    <div class="card">
+      <h4><span class="dot" style="background:#3fb950"></span> Database (pgvector)</h4>
+      <p>PostgreSQL 15 con extensión pgvector. Almacena peers, sesiones, mensajes y vectores de embedding (768d).</p>
+    </div>
+    <div class="card">
+      <h4><span class="dot" style="background:#f778ba"></span> Redis</h4>
+      <p>Cola de trabajos para el deriver + caché de representaciones.</p>
+    </div>
+    <div class="card">
+      <h4><span class="dot" style="background:#bc8cff"></span> Deriver</h4>
+      <p>Worker asíncrono que consume la cola de Redis, genera representaciones, resúmenes y observaciones.</p>
+    </div>
+    <div class="card">
+      <h4><span class="dot" style="background:#39d2c0"></span> Ollama</h4>
+      <p>Servidor local de embeddings via nomic-embed-text-v2-moe (768d). API compatible con OpenAI.</p>
+    </div>
+    <div class="card">
+      <h4><span class="dot" style="background:#d29922"></span> Dreamer</h4>
+      <p>Sistema de razonamiento profundo: descubre patrones que el deriver no detecta. Opera en segundo plano con árboles de similitud.</p>
+    </div>
+  </div>
+</section>
+<div class="back-top"><a href="#">↑ volver</a></div>
+
+<!-- ======= 3. Honcho Loop ======= -->
+<section id="honcho-loop">
+  <h2><span class="num">03</span> Honcho Loop</h2>
+  <p>El ciclo fundamental de Honcho: <strong>Store → Reason → Query → Inject</strong>. Cada mensaje que entra desencadena procesamiento asíncrono.</p>
+
+  <div class="graph-wrap" id="g-loop" style="height:340px"></div>
+
+  <h3>Flujo detallado</h3>
+  <table>
+    <tr><th>Paso</th><th>Qué ocurre</th><th>Componente</th></tr>
+    <tr><td>1. Store</td><td>Peers envían mensajes a una sesión via API REST. Se persisten en pgvector y se encolan en Redis.</td><td><span class="tag tag-llm">API</span> <span class="tag tag-store">pgvector</span> <span class="tag tag-queue">Redis</span></td></tr>
+    <tr><td>2. Reason</td><td>Deriver consume la cola: actualiza representaciones del peer, genera observaciones, crea resúmenes de sesión.</td><td><span class="tag tag-llm">Deriver</span> <span class="tag tag-emb">LLM</span></td></tr>
+    <tr><td>3. Query</td><td>El cliente pregunta via chat, búsqueda semántica, o contexto de sesión. Honcho sintetiza usando representaciones + conclusiones.</td><td><span class="tag tag-llm">API</span> <span class="tag tag-store">pgvector</span></td></tr>
+    <tr><td>4. Inject</td><td>El resultado se inyecta al prompt del agente (Hermes, Claude Code, etc.) como contexto enriquecido.</td><td><span class="tag tag-llm">Agente</span></td></tr>
+  </table>
+
+  <h3>Primitivas</h3>
+  <table>
+    <tr><th>Primitiva</th><th>Descripción</th></tr>
+    <tr><td>Workspace</td><td>Contenedor raíz. Aísla datos por caso de uso.</td></tr>
+    <tr><td>Peer</td><td>Participante — humano o agente de IA.</td></tr>
+    <tr><td>Session</td><td>Contexto conversacional. Muchos-a-muchos con peers.</td></tr>
+    <tr><td>Message</td><td>Unidad atómica de datos (comunicación peer-to-peer o chunk de documento).</td></tr>
+    <tr><td>Conclusion</td><td>Inferencia extraída por el deriver sobre un peer.</td></tr>
+    <tr><td>Representation</td><td>Snapshot estático de lo que Honcho sabe de un peer.</td></tr>
+    <tr><td>Peer Card</td><td>Resumen compacto de identidad del peer.</td></tr>
+  </table>
+</section>
+<div class="back-top"><a href="#">↑ volver</a></div>
+
+<!-- ======= 4. Deriver Pipeline ======= -->
+<section id="deriver">
+  <h2><span class="num">04</span> Deriver Pipeline</h2>
+  <p>El deriver es el corazón del procesamiento asíncrono. Corre en un contenedor separado y consume mensajes desde la cola de Redis.</p>
+
+  <div class="graph-wrap" id="g-deriver" style="height:400px"></div>
+
+  <h3>Tipos de trabajo</h3>
+  <table>
+    <tr><th>Tipo</th><th>Qué hace</th><th>Modelo</th></tr>
+    <tr><td><code>representation</code></td><td>Actualiza la representación del peer: extrae conclusiones deductivas e inductivas de los mensajes recientes</td><td>DeepSeek v4 Flash</td></tr>
+    <tr><td><code>summary</code></td><td>Genera o actualiza el resumen de una sesión cuando se acerca al límite de tokens</td><td>DeepSeek v4 Pro</td></tr>
+    <tr><td><code>dream</code></td><td>Procesamiento nocturno (o periódico) para encontrar patrones profundos que el deriver diario no capta</td><td>DeepSeek v4 Pro</td></tr>
+  </table>
+
+  <h3>Observaciones y conclusiones</h3>
+  <p>El deriver genera observaciones que se almacenan en colecciones vectoriales internas, keyed por par <code>(observer, observed)</code>. Esto permite tanto auto-representación (observer == observed) como modelado cross-peer (qué sabe el peer A sobre el peer B).</p>
+
+  <h3>Deduplicación</h3>
+  <p>Configurado con <code>WORKING_REPRESENTATION_DEDUP_DISTANCE=0.35</code> — observaciones semánticamente similares se fusionan para evitar redundancia en la representación.</p>
+</section>
+<div class="back-top"><a href="#">↑ volver</a></div>
+
+<!-- ======= 5. Dreamer ======= -->
+<section id="dreamer">
+  <h2><span class="num">05</span> Dreamer — Razonamiento Profundo</h2>
+  <p>El Dreamer es un sistema de razonamiento asíncrono que opera en ciclos programados (no en tiempo real como el deriver). Descubre patrones latentes y conexiones que el deriver no detecta en el procesamiento diario.</p>
+
+  <div class="info-grid">
+    <div class="card">
+      <h4>🧬 Especialistas</h4>
+      <p>Múltiples "especialistas" con prompts distintos analizan al peer desde diferentes ángulos (personalidad, metas, frustraciones, etc.)</p>
+    </div>
+    <div class="card">
+      <h4>🌲 Árboles de similitud</h4>
+      <p>Usa CoverTree, RP-Tree, LSH y otros algoritmos para encontrar clusters de observaciones relacionadas.</p>
+    </div>
+    <div class="card">
+      <h4>🔄 Surprisal</h4>
+      <p>Detecta observaciones "sorprendentes" — aquellas que contradicen la representación actual del peer, gatillando revisión.</p>
+    </div>
+  </div>
+</section>
+<div class="back-top"><a href="#">↑ volver</a></div>
+
+<!-- ======= 6. Configuración TGT ======= -->
+<section id="config">
+  <h2><span class="num">06</span> Configuración TGT One</h2>
+  <p>Nuestra configuración local usa <strong>DeepSeek API</strong> como LLM principal y <strong>Ollama local</strong> para embeddings (nomic-embed-text-v2-moe, 768d).</p>
+
+  <h3>Variables de Entorno Esenciales</h3>
+  <div class="cmd-block">
+    <span class="comment"># LLM Principal (DeepSeek)</span><br>
+    LLM_OPENAI_API_KEY=sk-...deepseek...<br><br>
+    <span class="comment"># Embeddings via Ollama local (768d)</span><br>
+    EMBED_MESSAGES=true<br>
+    EMBEDDING_VECTOR_DIMENSIONS=768<br>
+    EMBEDDING_MODEL_CONFIG__TRANSPORT=openai<br>
+    EMBEDDING_MODEL_CONFIG__MODEL=nomic-embed-text-v2-moe<br>
+    EMBEDDING_MODEL_CONFIG__OVERRIDES__BASE_URL=http://ollama:11434/v1<br><br>
+    <span class="comment"># Vector store</span><br>
+    VECTOR_STORE_TYPE=pgvector<br><br>
+    <span class="comment"># Deriver</span><br>
+    DERIVER_MODEL_CONFIG__TRANSPORT=openai<br>
+    DERIVER_MODEL_CONFIG__MODEL=deepseek-v4-flash<br>
+    DERIVER_MODEL_CONFIG__OVERRIDES__BASE_URL=https://api.deepseek.com/v1<br>
+    DERIVER__WORKING_REPRESENTATION_DEDUP_DISTANCE=0.35<br>
+    DERIVER__FLUSH_ENABLED=true
+  </div>
+
+  <h3>Modelos por nivel de razonamiento</h3>
+  <table>
+    <tr><th>Nivel</th><th>Modelo</th><th>Uso</th></tr>
+    <tr><td>minimal / low</td><td>DeepSeek v4 Flash</td><td>Consultas rápidas, búsqueda simple</td></tr>
+    <tr><td>medium / high / max</td><td>DeepSeek v4 Pro</td><td>Razonamiento profundo, resúmenes, dreaming</td></tr>
+  </table>
+
+  <h3>Puertos</h3>
+  <table>
+    <tr><th>Servicio</th><th>Puerto (host)</th><th>Acceso</th></tr>
+    <tr><td>API Honcho</td><td>8000</td><td>127.0.0.1:8000</td></tr>
+    <tr><td>PostgreSQL</td><td>5432</td><td>127.0.0.1:5432</td></tr>
+    <tr><td>Redis</td><td>6379</td><td>127.0.0.1:6379</td></tr>
+    <tr><td>Ollama</td><td>11434</td><td>127.0.0.1:11434</td></tr>
+  </table>
+</section>
+<div class="back-top"><a href="#">↑ volver</a></div>
+
+<!-- ======= 7. Servicios Docker ======= -->
+<section id="services">
+  <h2><span class="num">07</span> Servicios Docker</h2>
+  <p>5 servicios definidos en <code>docker-compose.yml</code>. Todos corren bajo redes aisladas de Docker.</p>
+
+  <div class="graph-wrap" id="g-services" style="height:380px"></div>
+
+  <h3>Detalle de servicios</h3>
+  <table>
+    <tr><th>Servicio</th><th>Imagen</th><th>Depende de</th><th>Healthcheck</th></tr>
+    <tr><td>api</td><td>Build local (Dockerfile)</td><td>database, redis</td><td>—</td></tr>
+    <tr><td>database</td><td>pgvector/pgvector:pg15</td><td>—</td><td>pg_isready (5s)</td></tr>
+    <tr><td>redis</td><td>redis:8.2</td><td>—</td><td>redis-cli ping (5s)</td></tr>
+    <tr><td>ollama</td><td>ollama/ollama:latest</td><td>—</td><td>ollama --version (30s, start: 60s)</td></tr>
+    <tr><td>deriver</td><td>honcho-deriver</td><td>api, database, redis</td><td>—</td></tr>
+  </table>
+
+  <h3>Volúmenes persistentes</h3>
+  <table>
+    <tr><th>Volumen</th><th>Montaje</th><th>Propósito</th></tr>
+    <tr><td>pgdata</td><td>/var/lib/postgresql/data/</td><td>Datos de PostgreSQL + vectores</td></tr>
+    <tr><td>redis-data</td><td>/data</td><td>Persistencia de cola Redis</td></tr>
+    <tr><td>ollama-data</td><td>/root/.ollama</td><td>Modelos descargados (nomic-embed-text)</td></tr>
+  </table>
+
+  <h3>Entrypoint</h3>
+  <p>El contenedor <code>api</code> ejecuta <code>docker/entrypoint.sh</code> que corre migraciones automáticas (<code>provision_db.py</code>) antes de iniciar FastAPI.</p>
+  <div class="cmd-block">
+    <span class="prompt">$</span> cat docker/entrypoint.sh<br>
+    <span class="comment">#!/bin/sh</span><br>
+    /app/.venv/bin/python scripts/provision_db.py<br>
+    exec /app/.venv/bin/fastapi run --host 0.0.0.0 src/main.py
+  </div>
+</section>
+<div class="back-top"><a href="#">↑ volver</a></div>
+
+<!-- ======= 8. API Reference ======= -->
+<section id="api">
+  <h2><span class="num">08</span> API Reference</h2>
+  <p>Todas las rutas siguen el patrón <code>/v3/{resource}/{id}/{action}</code>. Los endpoints de listado/búsqueda usan POST para aceptar bodies de filtro.</p>
+
+  <h3>Routers principales</h3>
+  <table>
+    <tr><th>Recurso</th><th>Endpoint base</th><th>Operaciones clave</th></tr>
+    <tr><td>Workspaces</td><td>/v3/workspaces</td><td>CRUD + search</td></tr>
+    <tr><td>Peers</td><td>/v3/workspaces/{id}/peers</td><td>CRUD + chat (dialectic) + messages + representation</td></tr>
+    <tr><td>Sessions</td><td>/v3/workspaces/{id}/sessions</td><td>CRUD + clone + manage peers + get context</td></tr>
+    <tr><td>Messages</td><td>/v3/workspaces/{id}/sessions/{sid}/messages</td><td>Create (batch hasta 100), upload file, list, get, update</td></tr>
+    <tr><td>Conclusions</td><td>/v3/workspaces/{id}/conclusions</td><td>CRUD + semantic search + delete</td></tr>
+    <tr><td>Keys</td><td>/v3/workspaces/{id}/keys</td><td>Create scoped JWTs</td></tr>
+    <tr><td>Webhooks</td><td>/v3/workspaces/{id}/webhooks</td><td>Register endpoint, list, delete, test</td></tr>
+  </table>
+
+  <h3>Chat Endpoint (Dialectic)</h3>
+  <p>El endpoint <code>POST /v3/workspaces/{wid}/peers/{pid}/chat</code> es la interfaz principal de consulta. Acepta preguntas en lenguaje natural sobre un peer y usa reasoning multi-nivel para responder.</p>
+  <div class="cmd-block">
+    <span class="comment"># Consultar sobre un peer</span><br>
+    curl -X POST http://localhost:8000/v3/workspaces/my-app/peers/alice/chat \<br>
+    &nbsp;&nbsp;-H "Content-Type: application/json" \<br>
+    &nbsp;&nbsp;-d '{"message": "¿Qué estilo de aprendizaje prefiere alice?", "reasoning_level": "low"}'
+  </div>
+</section>
+<div class="back-top"><a href="#">↑ volver</a></div>
+
+<!-- ======= 9. Comandos Útiles ======= -->
+<section id="commands">
+  <h2><span class="num">09</span> Comandos Útiles</h2>
+
+  <h3>Gestión del stack</h3>
+  <div class="cmd-block">
+    <span class="prompt">$</span> docker compose up -d                    <span class="comment"># Levantar todo</span><br>
+    <span class="prompt">$</span> docker compose down                       <span class="comment"># Detener todo</span><br>
+    <span class="prompt">$</span> docker compose logs -f api                 <span class="comment"># Logs API en vivo</span><br>
+    <span class="prompt">$</span> docker compose logs --tail=30 deriver      <span class="comment"># Últimos logs del deriver</span><br>
+    <span class="prompt">$</span> docker compose up -d --build api           <span class="comment"># Reconstruir API</span><br>
+    <span class="prompt">$</span> docker compose up -d --build deriver       <span class="comment"># Reconstruir deriver</span><br>
+    <span class="prompt">$</span> docker compose ps                          <span class="comment"># Estado de servicios</span>
+  </div>
+
+  <h3>Healthcheck</h3>
+  <div class="cmd-block">
+    <span class="prompt">$</span> curl http://localhost:8000/health<span class="comment">  # → {"status":"ok"}</span>
+  </div>
+
+  <h3>Embeddings — configuración</h3>
+  <div class="cmd-block">
+    <span class="comment"># Si se cambia el modelo de embeddings, hay que re-indexar</span><br>
+    <span class="prompt">$</span> docker compose run --rm --entrypoint python api scripts/configure_embeddings.py\n\
+    &nbsp;&nbsp;--yes --batch-size 50
+  </div>
+
+  <h3>Scripts útiles</h3>
+  <div class="cmd-block">
+    <span class="comment"># Forzar regeneración de todos los embeddings</span><br>
+    <span class="prompt">$</span> docker compose run --rm --entrypoint python api \<br>
+    &nbsp;&nbsp;scripts/generate_message_embeddings.py<br><br>
+    <span class="comment"># Ver estado de la cola</span><br>
+    <span class="prompt">$</span> docker compose exec redis redis-cli LLEN "honcho:queue:default"<br><br>
+    <span class="comment"># Ver representaciones de todos los peers</span><br>
+    <span class="prompt">$</span> docker compose exec database psql -U postgres -c \<br>
+    &nbsp;&nbsp;"SELECT * FROM working_representations;"
+  </div>
+
+  <h3>Backup y restore</h3>
+  <div class="cmd-block">
+    <span class="comment"># Backup de la base de datos vectorial</span><br>
+    <span class="prompt">$</span> docker compose exec -T database pg_dump -U postgres > ~/backups/honcho/honcho-$(date +%F).sql<br><br>
+    <span class="comment"># Restore</span><br>
+    <span class="prompt">$</span> cat honcho-2025-06-10.sql | docker compose exec -T database psql -U postgres
+  </div>
+
+  <h3>SDK Python — test rápido</h3>
+  <div class="cmd-block">
+    <span class="prompt">$</span> pip install honcho-ai<br><br>
+    <span class="prompt">>>> </span> from honcho import Honcho<br>
+    <span class="prompt">>>> </span> h = Honcho(workspace_id="test", base_url="http://localhost:8000")<br>
+    <span class="prompt">>>> </span> alice = h.peer("alice")<br>
+    <span class="prompt">>>> </span> ses = h.session("s1")<br>
+    <span class="prompt">>>> </span> ses.add_messages([alice.message("hola, me llamo alice")])<br>
+    <span class="prompt">>>> </span> alice.chat("¿cómo se llama este peer?")
+  </div>
+</section>
+<div class="back-top"><a href="#">↑ volver</a></div>
+
+<footer>
+  <p>Honcho v3 · Plastic Labs · TGT One Self-hosted · docs generadas con G6 v5</p>
+  <p style="font-size:0.75rem; margin-top:4px;">DeepSeek v4 Flash/Pro · Ollama nomic-embed-text-v2-moe · pgvector 768d</p>
+</footer>
+
+</div><!-- /container -->
+
+<script>
+// ---------- Constants ----------
+const C = {
+  build: '#58a6ff', transfer: '#39d2c0', deploy: '#3fb950',
+  rollback: '#d29922', artifact: '#bc8cff', server: '#f78166',
+  local: '#58a6ff', ws: '#39d2c0', cache: '#f778ba',
+  backend: '#58a6ff', surface: '#1c2128', border: '#30363d',
+  text: '#e6edf3', muted: '#8b949e',
+};
+
+function rect(id, x, y, label, color, opts = {}) {
+  return {
+    id, type: 'rect',
+    style: {
+      x, y,
+      size: opts.w ? [opts.w, opts.h || 40] : [140, 40],
+      fill: opts.fill || C.surface, stroke: color, radius: opts.radius || 6,
+      labelText: label, labelFill: opts.labelColor || color,
+      labelFontSize: opts.fontSize || 12, labelFontWeight: opts.bold ? 600 : 400,
+    },
+  };
+}
+
+function edge(from, to, color, label) {
+  const e = { source: from, target: to, style: { stroke: color || C.border } };
+  if (label) e.style.labelText = label;
+  return e;
+}
+
+function dashedEdge(from, to, color, label) {
+  const e = { source: from, target: to, style: { stroke: color || C.muted, lineDash: [5, 4], endArrow: false } };
+  if (label) e.style.labelText = label;
+  return e;
+}
+
+// ---------- initGraph ----------
+function initGraph(containerId, data, opts = {}) {
+  const container = document.getElementById(containerId);
+  if (!container) return null;
+  const rect_ = container.getBoundingClientRect();
+  const w = rect_.width || container.clientWidth || 800;
+  const h = opts.height || container.clientHeight || 300;
+
+  container.style.width = w + 'px';
+  container.style.height = h + 'px';
+
+  let graph;
+  try {
+    const graphOpts = {
+      container,
+      width: w,
+      height: h,
+      autoFit: { type: 'view' },
+      data,
+      node: {
+        style: {
+          labelPlacement: 'center',
+          labelFill: '#e6edf3',
+          lineWidth: 1.5,
+          cursor: 'pointer',
+        },
+      },
+      edge: {
+        style: {
+          stroke: '#30363d',
+          lineWidth: 2,
+          endArrow: true,
+          labelBackground: true,
+          labelBackgroundFill: '#0d1117',
+          labelBackgroundOpacity: 0.9,
+          labelFill: '#8b949e',
+          labelFontSize: 11,
+        },
+      },
+      behaviors: ['drag-canvas'],
+    };
+
+    if (opts.layout) {
+      graphOpts.layout = opts.layout;
+      if (data.nodes) {
+        data.nodes.forEach(n => { delete n.style.x; delete n.style.y; });
+      }
+    }
+
+    graph = new G6.Graph(graphOpts);
+    graph.render();
+
+    // Ctrl+scroll zoom
+    try {
+      const cv = graph.getCanvas();
+      if (cv && cv.getContainer()) {
+        cv.getContainer().addEventListener('wheel', (e) => {
+          if (e.ctrlKey || e.metaKey) {
+            e.preventDefault(); e.stopPropagation();
+            const delta = e.deltaY > 0 ? 0.88 : 1.12;
+            graph.zoomTo(Math.max(0.2, Math.min(5, graph.getZoom() * delta)));
+          }
+        }, { passive: false });
+      }
+    } catch (_) {}
+
+    graph.on('canvas:dblclick', () => {
+      graph.zoomTo(1);
+      graph.fitView({ padding: [40, 40] });
+    });
+  } catch (err) {
+    console.error('[G6] error for', containerId, err);
+    return null;
+  }
+  return graph;
+}
+
+function addToolbar(graphId, graph) {
+  if (!graph) return;
+  const wrap = document.getElementById(graphId);
+  if (!wrap || !wrap.classList.contains('graph-wrap')) return;
+
+  const tb = document.createElement('div');
+  tb.className = 'graph-toolbar';
+  tb.innerHTML = `
+    <button title="Centrar" data-action="fit">⌂</button>
+    <button title="Zoom +" data-action="zoomin">⊕</button>
+    <button title="Zoom −" data-action="zoomout">⊖</button>
+    <div class="sep"></div>
+    <button title="Reset" data-action="reset">⟲</button>
+  `;
+  wrap.appendChild(tb);
+
+  tb.addEventListener('click', (e) => {
+    const btn = e.target.closest('button');
+    if (!btn || graph.destroyed) return;
+    const action = btn.dataset.action;
+    try {
+      if (action === 'fit') graph.fitView({ padding: [40, 40] });
+      else if (action === 'zoomin') graph.zoomTo(Math.min(graph.getZoom() * 1.3, 3));
+      else if (action === 'zoomout') graph.zoomTo(Math.max(graph.getZoom() / 1.3, 0.3));
+      else if (action === 'reset') { graph.zoomTo(1); graph.fitView({ padding: [40, 40] }); }
+    } catch (_) {}
+  });
+}
+
+// ========== GRAPH DATA ==========
+
+// 2. Arquitectura
+const archData = {
+  nodes: [
+    rect('api', 60, 30, 'API (FastAPI)\n/health → POST /v3/...', C.backend, { w: 170, h: 50, fontSize: 11 }),
+    rect('pgv', 340, 30, 'pgvector 15\nPostgreSQL + Vectores', C.deploy, { w: 160, h: 50, fontSize: 11 }),
+    rect('redis', 60, 150, 'Redis 8.2\nQueue + Cache', C.cache, { w: 150, h: 50, fontSize: 11 }),
+    rect('ollama', 280, 150, 'Ollama\nnomic-embed-text-v2-moe', C.transfer, { w: 160, h: 50, fontSize: 11 }),
+    rect('deriver', 60, 270, 'Deriver Worker\nRepresentaciones', C.artifact, { w: 170, h: 50, fontSize: 11 }),
+    rect('dreamer', 310, 275, 'Dreamer\nPatrones profundos', C.rollback, { w: 150, h: 40, fontSize: 11 }),
+    rect('agent', 500, 150, 'Agente (Hermes)\nConsulta + Contexto', C.server, { w: 160, h: 50, fontSize: 11 }),
+  ],
+  edges: [
+    edge('api', 'pgv', C.deploy, 'CRUD'),
+    edge('api', 'redis', C.cache, 'enqueue'),
+    edge('api', 'ollama', C.transfer, 'embeddings'),
+    edge('api', 'agent', C.server, 'REST'),
+    dashedEdge('redis', 'deriver', C.cache, 'consume queue'),
+    edge('deriver', 'pgv', C.deploy, 'write'),
+    edge('deriver', 'ollama', C.transfer, 'embed'),
+    dashedEdge('deriver', 'dreamer', C.rollback, 'triggers'),
+    edge('dreamer', 'pgv', C.rollback, 'write insights'),
+    edge('ollama', 'pgv', C.transfer, 'vector store'),
+  ],
+};
+
+// 3. Honcho Loop
+const loopData = {
+  nodes: [
+    rect('store', 30, 20, '📥 STORE\nMessages → API → pgvector + Redis', C.backend, { w: 180, h: 60, fontSize: 11, bold: true }),
+    rect('reason', 260, 20, '🧠 REASON\nDeriver procesa cola\nObservaciones + Representaciones', C.artifact, { w: 180, h: 60, fontSize: 11, bold: true }),
+    rect('query', 490, 20, '🔍 QUERY\nChat / Search / Context\nConclusiones + Vectores', C.deploy, { w: 180, h: 60, fontSize: 11, bold: true }),
+    rect('inject', 720, 20, '🚀 INJECT\nContexto al prompt\ndel agente', C.server, { w: 180, h: 60, fontSize: 11, bold: true }),
+  ],
+  edges: [
+    edge('store', 'reason', C.accent, 'enqueue'),
+    edge('reason', 'query', C.accent, 'write'),
+    edge('query', 'inject', C.accent, 'response'),
+  ],
+};
+
+// 4. Deriver Pipeline
+const deriverData = {
+  nodes: [
+    rect('d-api', 30, 10, 'API', C.accent, { w: 100, h: 35, fontSize: 11 }),
+    rect('d-redis', 180, 10, 'Redis Queue', C.cache, { w: 130, h: 35, fontSize: 11 }),
+    rect('d-mgr', 30, 100, 'Queue Manager\n(SQLAlchemy loop)', C.artifact, { w: 150, h: 45, fontSize: 11 }),
+    rect('d-proc', 240, 100, 'process_item()\nprocess_representation_batch()', C.artifact, { w: 180, h: 45, fontSize: 11 }),
+    rect('d-llm', 40, 200, 'LLM Call\n(DeepSeek v4 Flash)', C.rollback, { w: 150, h: 40, fontSize: 11 }),
+    rect('d-oll', 240, 200, 'Ollama Embed\n768d', C.transfer, { w: 140, h: 40, fontSize: 11 }),
+    rect('d-db', 440, 100, 'pgvector\nWrite conclusions + rep', C.deploy, { w: 170, h: 45, fontSize: 11 }),
+  ],
+  edges: [
+    edge('d-api', 'd-redis', C.cache, 'enqueue message'),
+    edge('d-redis', 'd-mgr', C.cache, 'XREAD'),
+    edge('d-mgr', 'd-proc', C.artifact, 'dispatch'),
+    edge('d-proc', 'd-llm', C.rollback, 'reason'),
+    edge('d-proc', 'd-oll', C.transfer, 'embed'),
+    edge('d-proc', 'd-db', C.deploy, 'store'),
+    dashedEdge('d-oll', 'd-db', C.transfer, 'vector'),
+  ],
+};
+
+// 7. Docker Services
+const svcData = {
+  nodes: [
+    rect('svc-api', 40, 20, 'api\nFastAPI', C.accent, { w: 120, h: 40, fontSize: 11 }),
+    rect('svc-db', 230, 20, 'database\npgvector:pg15', C.deploy, { w: 140, h: 40, fontSize: 11 }),
+    rect('svc-rd', 420, 20, 'redis\n8.2', C.cache, { w: 120, h: 40, fontSize: 11 }),
+    rect('svc-oll', 40, 160, 'ollama\nlatest (GPU)', C.transfer, { w: 130, h: 40, fontSize: 11 }),
+    rect('svc-deriver', 230, 160, 'deriver\nhoncho-deriver', C.artifact, { w: 130, h: 40, fontSize: 11 }),
+    rect('svc-vol', 420, 160, 'Volumes\npgdata / redis-data\nollama-data', C.rollback, { w: 140, h: 55, fontSize: 11 }),
+  ],
+  edges: [
+    edge('svc-api', 'svc-db', C.deploy, 'depends'),
+    edge('svc-api', 'svc-rd', C.cache, 'depends'),
+    edge('svc-deriver', 'svc-db', C.deploy, 'depends'),
+    edge('svc-deriver', 'svc-rd', C.cache, 'depends'),
+    edge('svc-deriver', 'svc-api', C.accent, 'depends'),
+    edge('svc-oll', 'svc-deriver', C.transfer, 'embed'),
+  ],
+};
+
+// ========== RENDER ALL GRAPHS ==========
+const graphs = [
+  { id: 'g-arch', data: archData, height: 420, layout: { type: 'dagre', rankdir: 'TB', nodesep: 40, ranksep: 50, align: 'UL' } },
+  { id: 'g-loop', data: loopData, height: 340, layout: { type: 'dagre', rankdir: 'LR', nodesep: 40, ranksep: 60, align: 'UL' } },
+  { id: 'g-deriver', data: deriverData, height: 400, layout: { type: 'dagre', rankdir: 'LR', nodesep: 40, ranksep: 40, align: 'UL' } },
+  { id: 'g-services', data: svcData, height: 380, layout: { type: 'dagre', rankdir: 'LR', nodesep: 40, ranksep: 50, align: 'UL' } },
+];
+
+(function() {
+  graphs.forEach((g, i) => {
+    setTimeout(() => {
+      const graph = initGraph(g.id, g.data, { height: g.height, layout: g.layout });
+      addToolbar(g.id, graph);
+    }, i * 100);
+  });
+})();
+</script>
+</body>
+</html>

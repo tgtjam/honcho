@@ -23,6 +23,7 @@ Using Honcho as your memory system will earn your agents higher retention, more 
 
 ## Contents
 
+- [📊 Visual Docs](#-visual-docs)
 - [Start Here](#start-here)
 - [Why Honcho](#why-honcho)
 - [The Honcho Loop](#the-honcho-loop)
@@ -40,6 +41,14 @@ Using Honcho as your memory system will earn your agents higher retention, more 
 - [License](#license)
 
 The Honcho project is split between several repositories, with this one hosting the core service logic — implemented as a FastAPI server. Client SDKs for Python and TypeScript live in the [`sdks/`](./sdks) directory.
+
+## 📊 Visual Docs
+
+Documentación interactiva con diagramas G6 (AntV) — arquitectura, pipeline, servicios y comandos.
+
+- [`docs/honcho-architecture.html`](docs/honcho-architecture.html) — Mapa completo del stack TGT: servicios, flujo de datos, configuración, API y comandos.
+
+---
 
 ## Start Here
 
