@@ -276,7 +276,7 @@ class RepresentationManager:
             )
 
         async with tracked_db(
-            "representation_manager.get_working_representation"
+            "representation_manager.get_working_representation", read_only=True
         ) as new_db:
             return await self._get_working_representation_internal(
                 new_db,
@@ -593,7 +593,12 @@ class RepresentationManager:
     async def _query_documents_most_derived(
         self, db: AsyncSession, top_k: int
     ) -> list[models.Document]:
-        """Query most derived documents, excluding embedding-near-duplicates."""
+        """Query most derived documents, excluding embedding-near-duplicates.
+
+        Ties in times_derived are broken by created_at descending (most recent
+        first), then by id for deterministic ordering within the same batch
+        timestamp.
+        """
         dedup_distance = settings.DERIVER.WORKING_REPRESENTATION_DEDUP_DISTANCE
 
         raw_sql = sa_text("""
@@ -621,7 +626,7 @@ class RepresentationManager:
                         AND LENGTH(d2.content) >= LENGTH(d.content)
                   )
               )
-            ORDER BY d.times_derived DESC
+            ORDER BY d.times_derived DESC, d.created_at DESC, d.id
             LIMIT :limit
         """)
 
