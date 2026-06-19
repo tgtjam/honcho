@@ -143,7 +143,6 @@ ENABLED = true
 
 [vector_store]
 TYPE = "pgvector"
-DIMENSIONS = 768
 
 [metrics]
 ENABLED = false
