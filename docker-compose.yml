@@ -94,6 +94,7 @@ services:
   ollama:
     image: ollama/ollama:latest
     restart: unless-stopped
+    runtime: nvidia
     entrypoint: ["/bin/sh", "-c"]
     command:
       - "ollama serve & sleep 3 && ollama pull nomic-embed-text-v2-moe 2>&1; wait"
@@ -101,14 +102,6 @@ services:
       - "127.0.0.1:11434:11434"
     volumes:
       - ollama-data:/root/.ollama
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: all
-              capabilities:
-                - gpu
     healthcheck:
       test: ["CMD-SHELL", "ollama --version || exit 1"]
       interval: 30s
