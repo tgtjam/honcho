@@ -1,6 +1,17 @@
 # Honcho self-hosted — TGT One setup
-# LLM: DeepSeek API / Embeddings: Ollama local
+# LLM: DeepSeek API / Embeddings: Ollama local / Dreamer: DeepSeek Pro cloud
 # Based on elkimek/honcho-self-hosted + our code improvements
+#
+# MODEL ASSIGNMENT (definitivo — no cambiar sin validación):
+#   Deriver   → phi3.5:3.8b local    (no necesita tools, funciona bien)
+#   Summary   → phi3.5:3.8b local    (no necesita tools)
+#   Dreamer   → deepseek-v4-pro      (Deduction + Induction necesitan tools 
+#                                       phi3.5 no soporta tools, qwen3B muy 
+#                                       chico para el tool loop. DeepSeek Pro 
+#                                       es la única opción viable.)
+#   Dialectic → qwen2.5-coder:3b local (soporta tools, contexto 32K alcanza)
+#   Embeddings → bge-m3 local
+#   API Key: LLM_OPENAI_API_KEY en .env
 #
 # Usage:
 #   docker compose up -d
