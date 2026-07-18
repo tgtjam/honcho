@@ -1,6 +1,8 @@
 import logging
 import time
 
+from nanoid import generate as generate_nanoid
+
 from src import crud
 from src.config import ConfiguredModelSettings, settings
 from src.crud.representation import RepresentationManager
@@ -56,7 +58,7 @@ async def process_representation_tasks_batch(
         queue_item_message_ids: Message IDs from queue items being processed
         hit_batch_token_cap: queue batcher clamped this batch to fit
         was_flush_enabled: DERIVER.FLUSH_ENABLED snapshot at batch time
-        batch_max_tokens: DERIVER.REPRESENTATION_BATCH_MAX_TOKENS snapshot
+        batch_max_tokens: DERIVER.REPRESENTATION_BATCH_TARGET_INPUT_TOKENS snapshot
     """
     if not messages:
         return
@@ -142,6 +144,7 @@ async def process_representation_tasks_batch(
     model_config = base_model_config
 
     # Single LLM call
+    trace_id = generate_nanoid()
     llm_start = time.perf_counter()
     response = await honcho_llm_call(
         model_config=model_config,
@@ -159,6 +162,8 @@ async def process_representation_tasks_batch(
             parent_category="representation",
             observed=observed,
             track_name="Minimal Deriver",
+            trace_id=trace_id,
+            span_id=trace_id,
         ),
     )
     llm_duration = (time.perf_counter() - llm_start) * 1000

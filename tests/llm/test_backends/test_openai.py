@@ -504,6 +504,67 @@ async def test_openai_backend_converts_anthropic_style_tools() -> None:
     assert call["tool_choice"] == "required"
 
 
+async def test_openai_backend_translates_canonical_any_tool_choice_to_required() -> (
+    None
+):
+    """Regression: a Gemini→OpenAI fallback passes canonical "any", which OpenAI
+    rejects as an invalid param. The backend must translate it to "required"."""
+    client = Mock()
+    client.chat.completions.create = AsyncMock(
+        return_value=SimpleNamespace(
+            choices=[
+                SimpleNamespace(
+                    finish_reason="stop",
+                    message=SimpleNamespace(
+                        content="ok",
+                        tool_calls=[],
+                        reasoning_details=[],
+                    ),
+                )
+            ],
+            usage=SimpleNamespace(
+                prompt_tokens=10,
+                completion_tokens=5,
+                prompt_tokens_details=None,
+            ),
+        )
+    )
+
+    backend = OpenAIBackend(client)
+    await backend.complete(
+        model="gpt-4.1",
+        messages=[{"role": "user", "content": "Hello"}],
+        max_tokens=100,
+        tools=[
+            {
+                "name": "get_weather",
+                "description": "Lookup weather",
+                "input_schema": {"type": "object", "properties": {}},
+            }
+        ],
+        tool_choice="any",
+    )
+
+    assert _await_kwargs(client.chat.completions.create)["tool_choice"] == "required"
+
+
+@pytest.mark.parametrize(
+    ("canonical", "expected"),
+    [
+        ("any", "required"),
+        ("required", "required"),
+        ("auto", "auto"),
+        ("none", "none"),
+        (None, None),
+        ("search", {"type": "function", "function": {"name": "search"}}),
+        ({"name": "search"}, {"type": "function", "function": {"name": "search"}}),
+        ({"type": "function"}, {"type": "function"}),
+    ],
+)
+def test_openai_convert_tool_choice(canonical: Any, expected: Any) -> None:
+    assert OpenAIBackend._convert_tool_choice(canonical) == expected  # pyright: ignore[reportPrivateUsage]
+
+
 @pytest.mark.parametrize(
     "model",
     [
@@ -747,6 +808,7 @@ async def test_structured_output_json_object_mode_request_shape() -> None:
     assert system_messages, "expected a system message carrying the schema"
     system_content = system_messages[0]["content"]
     assert "JSON" in system_content
+    assert "json" in system_content
     assert "answer" in system_content  # schema property serialized in
     assert isinstance(result.content, _StructuredResponse)
     assert result.content.answer == "ok"
@@ -882,4 +944,126 @@ async def test_stream_structured_output_json_object_mode() -> None:
     call = _await_kwargs(client.chat.completions.create)
     assert call["response_format"] == {"type": "json_object"}
     system_messages = [m for m in call["messages"] if m["role"] == "system"]
-    assert system_messages and "JSON" in system_messages[0]["content"]
+    assert system_messages
+    assert "JSON" in system_messages[0]["content"]
+    assert "json" in system_messages[0]["content"]
+
+
+AGENT_TOOL = {
+    "name": "search",
+    "description": "Search for information",
+    "input_schema": {
+        "type": "object",
+        "properties": {"query": {"type": "string"}},
+    },
+}
+
+
+@pytest.mark.asyncio
+async def test_openai_backend_structured_with_tools_uses_create_not_parse() -> None:
+    """With tools + response_format, complete() must route through create()
+    with an explicit json_schema response_format: parse() raises client-side
+    on non-strict function tools, and our agent tools are deliberately
+    non-strict (see _convert_tools)."""
+    client = Mock()
+    client.chat.completions.create = AsyncMock(
+        return_value=_structured_create_return('{"answer":"ok"}')
+    )
+    client.chat.completions.parse = AsyncMock(
+        side_effect=AssertionError("parse() must not be called with tools")
+    )
+
+    backend = OpenAIBackend(client)
+    result = await backend.complete(
+        model="gpt-5.4-mini",
+        messages=[{"role": "user", "content": "Hello"}],
+        max_tokens=100,
+        tools=[AGENT_TOOL],
+        response_format=_StructuredResponse,
+    )
+
+    assert isinstance(result.content, _StructuredResponse)
+    assert result.content.answer == "ok"
+    client.chat.completions.parse.assert_not_awaited()
+    call = _await_kwargs(client.chat.completions.create)
+    assert call["response_format"]["type"] == "json_schema"
+    assert (
+        call["response_format"]["json_schema"]["schema"]
+        == _StructuredResponse.model_json_schema()
+    )
+    # Tools stay non-strict; strictness was the whole reason to avoid parse().
+    assert "strict" not in call["tools"][0]["function"]
+
+
+@pytest.mark.asyncio
+async def test_openai_backend_structured_with_tools_skips_parsing_tool_call_turn() -> (
+    None
+):
+    """A tool-call turn under tools + response_format must not attempt JSON
+    parsing (its content is empty and _parse_or_repair raises on that)."""
+    client = Mock()
+    client.chat.completions.create = AsyncMock(
+        return_value=SimpleNamespace(
+            choices=[
+                SimpleNamespace(
+                    finish_reason="tool_calls",
+                    message=SimpleNamespace(
+                        content=None,
+                        tool_calls=[
+                            SimpleNamespace(
+                                id="tool_1",
+                                function=SimpleNamespace(
+                                    name="search",
+                                    arguments='{"query": "honcho"}',
+                                ),
+                            )
+                        ],
+                        reasoning_details=[],
+                        refusal=None,
+                    ),
+                )
+            ],
+            usage=SimpleNamespace(
+                prompt_tokens=10,
+                completion_tokens=5,
+                prompt_tokens_details=None,
+            ),
+        )
+    )
+
+    backend = OpenAIBackend(client)
+    result = await backend.complete(
+        model="gpt-5.4-mini",
+        messages=[{"role": "user", "content": "Hello"}],
+        max_tokens=100,
+        tools=[AGENT_TOOL],
+        response_format=_StructuredResponse,
+    )
+
+    assert result.content == ""  # raw empty text, not a parsed model
+    assert result.tool_calls[0].name == "search"
+    assert result.tool_calls[0].input == {"query": "honcho"}
+
+
+@pytest.mark.asyncio
+async def test_openai_backend_structured_without_tools_still_uses_parse() -> None:
+    """Tool-less structured calls (deriver, final synthesis) keep parse()."""
+    parsed = _StructuredResponse(answer="ok")
+    client = Mock()
+    client.chat.completions.parse = AsyncMock(
+        return_value=_structured_create_return('{"answer":"ok"}', parsed=parsed)
+    )
+    client.chat.completions.create = AsyncMock(
+        side_effect=AssertionError("create() must not be called without tools")
+    )
+
+    backend = OpenAIBackend(client)
+    result = await backend.complete(
+        model="gpt-5.4-mini",
+        messages=[{"role": "user", "content": "Hello"}],
+        max_tokens=100,
+        response_format=_StructuredResponse,
+    )
+
+    assert result.content is parsed
+    client.chat.completions.create.assert_not_awaited()

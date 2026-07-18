@@ -30,11 +30,12 @@ def _json_object_instruction(response_format: type[BaseModel]) -> str:
     instruction — the deriver issues one structured call per batch on the worker
     hot path and would otherwise re-walk the schema + re-serialize it every call.
     """
-    # "JSON" must appear in the messages to satisfy the json_object contract.
+    # Some OpenAI-compatible providers enforce this JSON-object precondition with
+    # a case-sensitive substring check, so include lowercase "json" explicitly.
     return (
-        "You must respond with a single JSON object that conforms exactly to "
-        "the following JSON schema. Do not include any text, markdown, or code "
-        "fences outside the JSON object.\n\nJSON schema:\n"
+        "You must respond with a single JSON object (json) that conforms "
+        "exactly to the following JSON schema. Do not include any text, "
+        "markdown, or code fences outside the JSON object.\n\nJSON schema:\n"
         f"{json.dumps(response_format.model_json_schema())}"
     )
 
@@ -171,6 +172,24 @@ class OpenAIBackend:
                     response, response_format, model, empty_on_missing=True
                 )
                 return self._normalize_response(response, content_override=content)
+            if tools:
+                # parse() refuses non-strict function tools, and our agent tool
+                # schemas are deliberately non-strict (see _convert_tools), so
+                # tool-loop iterations use create() with an explicit json_schema
+                # response_format — same server-side schema enforcement, no
+                # strict-tools requirement — mirroring the streaming path.
+                params["response_format"] = self._json_schema_response_format(
+                    response_format
+                )
+                response = await self._client.chat.completions.create(**params)
+                # Tool-call turns carry no consumable content — the tool loop
+                # ignores it — and parsing their empty text would raise.
+                if getattr(response.choices[0].message, "tool_calls", None):
+                    return self._normalize_response(response)
+                content = self._parse_or_repair_structured_content(
+                    response, response_format, model, empty_on_missing=False
+                )
+                return self._normalize_response(response, content_override=content)
             params["response_format"] = response_format
             try:
                 response = await self._client.chat.completions.parse(**params)
@@ -273,13 +292,9 @@ class OpenAIBackend:
             else:
                 # Streaming create() can't take a BaseModel like parse() does;
                 # convert to a json_schema dict.
-                params["response_format"] = {
-                    "type": "json_schema",
-                    "json_schema": {
-                        "name": response_format.__name__,
-                        "schema": response_format.model_json_schema(),
-                    },
-                }
+                params["response_format"] = self._json_schema_response_format(
+                    response_format
+                )
         elif response_format is not None:
             params["response_format"] = response_format
         elif extra_params and extra_params.get("json_mode"):
@@ -352,8 +367,9 @@ class OpenAIBackend:
             params["stop"] = stop
         if tools:
             params["tools"] = self._convert_tools(tools)
-            if tool_choice is not None:
-                params["tool_choice"] = tool_choice
+            converted_tool_choice = self._convert_tool_choice(tool_choice)
+            if converted_tool_choice is not None:
+                params["tool_choice"] = converted_tool_choice
         if extra_params:
             for key in (
                 "top_p",
@@ -419,6 +435,20 @@ class OpenAIBackend:
             reasoning_details=extract_openai_reasoning_details(response),
             raw_response=response,
         )
+
+    @staticmethod
+    def _json_schema_response_format(
+        response_format: type[BaseModel],
+    ) -> dict[str, Any]:
+        """Build the response_format param for create() calls that can't use
+        parse(): streaming, and requests carrying non-strict function tools."""
+        return {
+            "type": "json_schema",
+            "json_schema": {
+                "name": response_format.__name__,
+                "schema": response_format.model_json_schema(),
+            },
+        }
 
     @staticmethod
     def _structured_output_mode(extra_params: dict[str, Any] | None) -> str | None:
@@ -507,6 +537,29 @@ class OpenAIBackend:
             return empty_structured_output(response_format)
         except ValidationError:
             return ""
+
+    @staticmethod
+    def _convert_tool_choice(
+        tool_choice: str | dict[str, Any] | None,
+    ) -> str | dict[str, Any] | None:
+        # Translate Honcho's canonical tool_choice vocabulary to OpenAI's. This
+        # mirrors the Anthropic/Gemini backends so a single TOOL_CHOICE value
+        # works regardless of which provider a fallback chain lands on. Notably
+        # OpenAI has no "any" — it spells the same intent "required".
+        if tool_choice is None:
+            return None
+        if isinstance(tool_choice, dict):
+            if "name" in tool_choice:
+                return {
+                    "type": "function",
+                    "function": {"name": tool_choice["name"]},
+                }
+            return tool_choice
+        if tool_choice in {"any", "required"}:
+            return "required"
+        if tool_choice in {"auto", "none"}:
+            return tool_choice
+        return {"type": "function", "function": {"name": tool_choice}}
 
     @staticmethod
     def _convert_tools(tools: list[dict[str, Any]]) -> list[dict[str, Any]]:

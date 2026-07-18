@@ -754,6 +754,10 @@ class EmbeddingSettings(HonchoSettings):
     # Caps concurrent message-embedding fan-out on the API request path (the
     # immediate-embed background task). The reconciler is unaffected.
     MAX_CONCURRENT_EMBEDDINGS: Annotated[int, Field(default=10, gt=0, le=100)] = 10
+    # Caps in-flight immediate-embed background tasks per API process. When
+    # saturated, message creation skips the fast path entirely and the
+    # reconciler embeds on its next cycle. 0 disables the fast path.
+    MAX_PENDING_EMBED_TASKS: Annotated[int, Field(default=50, ge=0)] = 50
 
     @model_validator(mode="before")
     @classmethod
@@ -873,7 +877,20 @@ class DeriverSettings(HonchoSettings):
         float, Field(default=0.20, ge=0.0, le=1.0)
     ] = 0.20
 
-    REPRESENTATION_BATCH_MAX_TOKENS: Annotated[
+    # Minimum tokens a representation work unit must accumulate (summed over
+    # its own unprocessed messages) before it becomes claimable. Bypassed by
+    # FLUSH_ENABLED and by REPRESENTATION_BATCH_MAX_AGE_SECONDS age-flushing.
+    # 0 disables the accumulation gate entirely (equivalent to FLUSH_ENABLED
+    # for claiming): work units are claimable as soon as anything is pending.
+    REPRESENTATION_BATCH_WORK_UNIT_TARGET_TOKENS: Annotated[
+        int,
+        Field(default=512, ge=0, le=16_384),
+    ] = 512
+    # Cumulative-token cap on the conversation window (queued messages plus
+    # interleaved context) fed to a single deriver LLM call when draining a
+    # claimed work unit. The first unprocessed message is always included,
+    # even if it alone exceeds the cap.
+    REPRESENTATION_BATCH_TARGET_INPUT_TOKENS: Annotated[
         int,
         Field(default=1024, ge=128, le=16_384),
     ] = 1024
@@ -899,9 +916,9 @@ class DeriverSettings(HonchoSettings):
 
     @model_validator(mode="after")
     def validate_batch_tokens_vs_context_limit(self):
-        if self.REPRESENTATION_BATCH_MAX_TOKENS > self.MAX_INPUT_TOKENS:
+        if self.REPRESENTATION_BATCH_TARGET_INPUT_TOKENS > self.MAX_INPUT_TOKENS:
             raise ValueError(
-                f"REPRESENTATION_BATCH_MAX_TOKENS ({self.REPRESENTATION_BATCH_MAX_TOKENS}) cannot exceed max deriver input tokens ({self.MAX_INPUT_TOKENS})"
+                f"REPRESENTATION_BATCH_TARGET_INPUT_TOKENS ({self.REPRESENTATION_BATCH_TARGET_INPUT_TOKENS}) cannot exceed max deriver input tokens ({self.MAX_INPUT_TOKENS})"
             )
         return self
 
@@ -1192,12 +1209,29 @@ class TelemetrySettings(HonchoSettings):
     # that join high-volume events to aggregate envelopes first.
     HIGH_VOLUME_SAMPLE_RATE: Annotated[float, Field(default=1.0, ge=0.0, le=1.0)] = 1.0
 
+    # --- Full-fidelity payload tracing (llm.call.traced / trace.content) ---
+    # Master toggle for replay-grade content capture. Default-off.
+    TRACE_PAYLOADS_ENABLED: bool = False
+
+    # Per-message cap (bytes) for captured content; oversized string content is
+    # clipped (with a marker) and the call is flagged was_truncated.
+    TRACE_MAX_BYTES: Annotated[int, Field(default=262144, gt=0)] = 262144
+
+    # Allowlist of CallPurpose values to capture; empty = all. Typed as str to
+    # keep the enum out of config (validated against CallPurpose at the producer,
+    # same pattern as LLMTelemetryContext.call_purpose).
+    TRACE_PURPOSES: list[str] = Field(default_factory=list)
+
 
 class CacheSettings(HonchoSettings):
     model_config = SettingsConfigDict(env_prefix="CACHE_", extra="ignore")  # pyright: ignore
 
     ENABLED: bool = False
     URL: str = "redis://localhost:6379/0?suppress=true"
+    # URL points at a Redis Cluster (OSS cluster protocol, e.g. GCP Memorystore
+    # for Redis Cluster). A standalone client cannot follow the MOVED redirects
+    # such deployments return for keys hashed to another shard.
+    CLUSTER: bool = False
     NAMESPACE: str | None = None
     DEFAULT_TTL_SECONDS: Annotated[int, Field(default=300, ge=1, le=86_400)] = (
         300  # how long to keep items in cache
@@ -1206,6 +1240,12 @@ class CacheSettings(HonchoSettings):
     DEFAULT_LOCK_TTL_SECONDS: Annotated[int, Field(default=5, ge=1, le=86_400)] = (
         5  # how long to hold a lock on a resource when fetching DB after cache miss
     )
+
+    # Polling interval while waiting for another worker's fetch lock. cashews
+    # defaults to 0, which busy-spins the event loop for the whole wait.
+    LOCK_WAIT_CHECK_INTERVAL_SECONDS: Annotated[
+        float, Field(default=0.1, gt=0, le=5)
+    ] = 0.1
 
 
 class SurprisalSettings(BaseModel):
@@ -1361,6 +1401,17 @@ class VectorStoreSettings(HonchoSettings):
         return self
 
 
+class TraceViewerSettings(HonchoSettings):
+    model_config = SettingsConfigDict(env_prefix="TRACE_VIEWER_", extra="ignore")  # pyright: ignore
+
+    ENABLED: bool = False
+    HOST: str = "127.0.0.1"
+    PORT: int = 8002
+    STORAGE_DIR: str = "./traces"
+    MAX_REQUEST_BYTES: int = 10 * 1024 * 1024  # 10 MB
+    VENDOR_CDN_BASE: str = "https://cdn.jsdelivr.net/npm"
+
+
 class AppSettings(HonchoSettings):
     # No env_prefix for app-level settings
     model_config = SettingsConfigDict(  # pyright: ignore
@@ -1380,6 +1431,29 @@ class AppSettings(HonchoSettings):
     EMBED_MESSAGES: bool = True
     LANGFUSE_HOST: str | None = None
     LANGFUSE_PUBLIC_KEY: str | None = None
+    # How Langfuse traces are produced:
+    #   "exporter" (default) — Langfuse is a projection over the captured
+    #     CapturedLLMCall stream (LangfuseExporter), the same source of truth as
+    #     the CloudEvents trace stream.
+    #   "inline" — legacy live instrumentation (@observe + propagate_attributes
+    #     spans during execution). Kept one release for side-by-side validation.
+    LANGFUSE_EXPORTER_MODE: Literal["inline", "exporter"] = "exporter"
+
+    @property
+    def langfuse_inline_enabled(self) -> bool:
+        """True when the legacy inline Langfuse instrumentation is active
+        (keys configured + ``LANGFUSE_EXPORTER_MODE == "inline"``)."""
+        return (
+            bool(self.LANGFUSE_PUBLIC_KEY) and self.LANGFUSE_EXPORTER_MODE == "inline"
+        )
+
+    @property
+    def langfuse_exporter_enabled(self) -> bool:
+        """True when the Langfuse exporter (a projection over the captured call
+        stream) is active (keys configured + ``LANGFUSE_EXPORTER_MODE == "exporter"``)."""
+        return (
+            bool(self.LANGFUSE_PUBLIC_KEY) and self.LANGFUSE_EXPORTER_MODE == "exporter"
+        )
 
     # Origins allowed by the FastAPI CORSMiddleware
     CORS_ORIGINS: list[str] = [
@@ -1410,6 +1484,7 @@ class AppSettings(HonchoSettings):
     CACHE: CacheSettings = Field(default_factory=CacheSettings)
     DREAM: DreamSettings = Field(default_factory=DreamSettings)
     VECTOR_STORE: VectorStoreSettings = Field(default_factory=VectorStoreSettings)
+    TRACE_VIEWER: TraceViewerSettings = Field(default_factory=TraceViewerSettings)
 
     @field_validator("LOG_LEVEL")
     def validate_log_level(cls, v: str) -> str:

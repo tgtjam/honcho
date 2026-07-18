@@ -169,6 +169,10 @@ If you update it, send the full deduplicated list and remove stale entries.
             SpecialistResult with metrics and content
         """
         run_id = parent_run_id or generate_nanoid()
+        # Specialists sharing the orchestrator's run_id (one dream trace) each get a
+        # distinct span_id so their CloudEvents trace resource ids don't collide;
+        # trace_id stays run_id so Langfuse still groups them (keyed by agent_type).
+        span_id = generate_nanoid() if parent_run_id is not None else run_id
         task_name = f"dreamer_{self.name}_{run_id}"
         start_time = time.perf_counter()
 
@@ -292,6 +296,11 @@ If you update it, send the full deduplicated list and remove stale entries.
                     parent_category="dream",
                     agent_type=self.name,
                     run_id=run_id,
+                    # Root span per specialist run (distinct span_id, see above).
+                    # parent_span_id stays None for now; wiring specialists as
+                    # children of a dream-level trace is forking (out of scope).
+                    trace_id=run_id,
+                    span_id=span_id,
                     observer=observer,
                     observed=observed,
                     track_name=f"Dreamer/{self.name}",
@@ -593,7 +602,8 @@ Use `create_observations_deductive`.
 3. Always include source_ids linking to the observations you're synthesizing
 4. Empty or missing source_ids will be rejected
 5. Delete outdated observations - don't leave duplicates
-6. Quality over quantity - fewer good deductions beat many weak ones"""
+6. Quality over quantity - fewer good deductions beat many weak ones
+7. When you are finished, do not output a summary of what you did - output only the token DONE"""
 
     def build_user_prompt(
         self,
@@ -724,7 +734,8 @@ Use `create_observations_inductive`.
 3. Confidence based on evidence count: 2=low, 3-4=medium, 5+=high
 4. Look for HOW things change over time, not just static facts
 5. Include source_ids - always link back to evidence
-6. Empty or missing source_ids will be rejected"""
+6. Empty or missing source_ids will be rejected
+7. When you are finished, do not output a summary of what you did - output only the token DONE"""
 
     def build_user_prompt(
         self,
