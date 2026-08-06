@@ -110,7 +110,7 @@ services:
     runtime: nvidia
     entrypoint: ["/bin/sh", "-c"]
     command:
-      - "ollama serve & sleep 3 && ollama pull nomic-embed-text-v2-moe 2>&1; wait"
+      - "ollama serve & sleep 3 && ollama pull bge-m3 && ollama pull phi3.5:3.8b && ollama pull qwen2.5-coder:3b 2>&1; wait"
     ports:
       - "127.0.0.1:11434:11434"
     volumes:
