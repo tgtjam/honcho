@@ -23,6 +23,10 @@ RUN --mount=type=cache,target=/root/.cache/uv \
     --mount=type=bind,source=pyproject.toml,target=pyproject.toml \
     uv sync --frozen --no-install-project --no-group dev
 
+# Copy only requirements to cache them in docker layer
+COPY uv.lock pyproject.toml /app/
+COPY sdks/python/pyproject.toml /app/sdks/python/pyproject.toml
+
 # Sync the project
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --frozen --no-group dev
