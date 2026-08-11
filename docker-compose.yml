@@ -1,128 +1,110 @@
-# Honcho self-hosted — TGT One setup
-# LLM: DeepSeek API / Embeddings: Ollama local / Dreamer: DeepSeek Pro cloud
-# Based on elkimek/honcho-self-hosted + our code improvements
-#
-# MODEL ASSIGNMENT (definitivo — no cambiar sin validación):
-#   Deriver   → phi3.5:3.8b local    (no necesita tools, funciona bien)
-#   Summary   → phi3.5:3.8b local    (no necesita tools)
-#   Dreamer   → deepseek-v4-pro      (Deduction + Induction necesitan tools 
-#                                       phi3.5 no soporta tools, qwen3B muy 
-#                                       chico para el tool loop. DeepSeek Pro 
-#                                       es la única opción viable.)
-#   Dialectic → qwen2.5-coder:3b local (soporta tools, contexto 32K alcanza)
-#   Embeddings → bge-m3 local
-#   API Key: LLM_OPENAI_API_KEY en .env
-#
-# Usage:
-#   docker compose up -d
-#   docker compose logs -f api
-
 services:
   api:
     build:
-      context: .
+      context: /home/jam/develop/honcho
       dockerfile: Dockerfile
-    entrypoint: ["sh", "docker/entrypoint.sh"]
+    entrypoint:
+    - sh
+    - docker/entrypoint.sh
     depends_on:
-      database:
-        condition: service_healthy
       redis:
         condition: service_healthy
-      ollama:
-        condition: service_healthy
     ports:
-      - "127.0.0.1:8000:8000"
-    env_file:
-      - .env
-    environment:
-      - DB_CONNECTION_URI=postgresql+psycopg://postgres:postgres@database:5432/postgres
-      - CACHE_URL=redis://redis:6379/0?suppress=true
-      - CACHE_ENABLED=true
-      - METRICS_ENABLED=false
+    - 127.0.0.1:8000:8000
     healthcheck:
       test:
-        - CMD
-        - /app/.venv/bin/python
-        - -c
-        - import urllib.request; urllib.request.urlopen('http://localhost:8000/health', timeout=2).read()
+      - CMD
+      - /app/.venv/bin/python
+      - -c
+      - import urllib.request; urllib.request.urlopen('http://localhost:8000/health',
+        timeout=2).read()
       interval: 5s
       timeout: 5s
       retries: 5
       start_period: 10s
+    environment:
+    - DB_CONNECTION_URI=postgresql+psycopg://postgres:postgres@postgres-local:5432/honcho
+    - CACHE_URL=redis://redis:6379/0?suppress=true
+    - CACHE_ENABLED=true
+    - PYTHONIOENCODING=utf-8
+    - PYTHONUTF8=1
+    - LANG=C.UTF-8
+    - LC_ALL=C.UTF-8
+    env_file:
+    - path: .env
+      required: true
     restart: unless-stopped
-
+    networks:
+    - default
+    - postgres-local_default
   deriver:
     build:
-      context: .
+      context: /home/jam/develop/honcho
       dockerfile: Dockerfile
     entrypoint:
-      - /app/.venv/bin/python
-      - -m
-      - src.deriver
+    - /app/.venv/bin/python
+    - -m
+    - src.deriver
     depends_on:
       api:
         condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+    - DB_CONNECTION_URI=postgresql+psycopg://postgres:postgres@postgres-local:5432/honcho
+    - CACHE_URL=redis://redis:6379/0?suppress=true
+    - CACHE_ENABLED=true
+    - PYTHONIOENCODING=utf-8
+    - PYTHONUTF8=1
+    - LANG=C.UTF-8
+    - LC_ALL=C.UTF-8
     env_file:
-      - .env
-    environment:
-      - DB_CONNECTION_URI=postgresql+psycopg://postgres:postgres@database:5432/postgres
-      - CACHE_URL=redis://redis:6379/0?suppress=true
-      - CACHE_ENABLED=true
+    - path: .env
+      required: true
     restart: unless-stopped
-
-  database:
-    image: pgvector/pgvector:pg15
-    restart: unless-stopped
-    ports:
-      - "127.0.0.1:5432:5432"
-    command: ["postgres", "-c", "max_connections=200"]
-    environment:
-      - POSTGRES_DB=postgres
-      - POSTGRES_USER=postgres
-      - POSTGRES_PASSWORD=postgres
-      - POSTGRES_HOST_AUTH_METHOD=trust
-      - PGDATA=/var/lib/postgresql/data/pgdata
-    volumes:
-      - ./database/init.sql:/docker-entrypoint-initdb.d/init.sql
-      - pgdata:/var/lib/postgresql/data/
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres -d postgres"]
-      interval: 5s
-      timeout: 5s
-      retries: 5
-
+    networks:
+    - default
+    - postgres-local_default
   redis:
     image: redis:8.2
     restart: unless-stopped
     ports:
-      - "127.0.0.1:6379:6379"
+    - 127.0.0.1:6379:6379
     volumes:
-      - redis-data:/data
+    - redis-data:/data
     healthcheck:
-      test: ["CMD-SHELL", "redis-cli ping"]
+      test:
+      - CMD-SHELL
+      - redis-cli ping
       interval: 5s
       timeout: 5s
       retries: 5
-
   ollama:
     image: ollama/ollama:latest
     restart: unless-stopped
-    runtime: nvidia
-    entrypoint: ["/bin/sh", "-c"]
-    command:
-      - "ollama serve & sleep 3 && ollama pull bge-m3 && ollama pull phi3.5:3.8b && ollama pull qwen2.5-coder:3b 2>&1; wait"
     ports:
-      - "127.0.0.1:11434:11434"
+    - 127.0.0.1:11434:11434
     volumes:
-      - ollama-data:/root/.ollama
+    - ollama-data:/root/.ollama
+    deploy:
+      resources:
+        reservations:
+          devices:
+          - driver: nvidia
+            count: all
+            capabilities:
+            - gpu
     healthcheck:
-      test: ["CMD-SHELL", "ollama list > /dev/null 2>&1 || exit 1"]
-      interval: 15s
+      test:
+      - CMD-SHELL
+      - ollama --version || exit 1
+      interval: 30s
       timeout: 10s
-      retries: 8
-      start_period: 180s
-
+      retries: 3
+      start_period: 60s
 volumes:
-  pgdata:
-  redis-data:
-  ollama-data:
+  redis-data: null
+  ollama-data: null
+networks:
+  postgres-local_default:
+    external: true
